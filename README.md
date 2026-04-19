@@ -6,6 +6,7 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
 ## Key Features
 
 * FP8 **Inference Support** - End-to-end inference support for `Qwen3-0.6B-FP8`
+* Chunked **Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
 
 ## Installation
 
@@ -52,3 +53,11 @@ See `bench.py` for benchmark.
 |----------------|-------------|----------|-----------------------|
 | Nano-vLLM-FP8  | 133,966     | 33.10    | 4047.47               |
 | vLLM           | 133,966     | 33.25    | 4029.13               |
+
+**Chunked Prefill Update:**
+
+Nano-vLLM-FP8 now supports chunked prefill, allowing oversized prefills to be split across scheduling rounds instead of waiting for the whole prompt budget at once.
+
+| Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
+|----------------|-------------|----------|-----------------------|
+| Nano-vLLM-FP8 + Chunked Prefill | 133,966 | 31.01 | 4320.04 |
