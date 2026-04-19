@@ -1,4 +1,5 @@
 import atexit
+import socket
 from dataclasses import fields
 from time import perf_counter
 from tqdm.auto import tqdm
@@ -12,12 +13,21 @@ from nanovllm.engine.scheduler import Scheduler
 from nanovllm.engine.model_runner import ModelRunner
 
 
+def get_open_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return sock.getsockname()[1]
+
+
 class LLMEngine:
 
     def __init__(self, model, **kwargs):
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
+        if config.dist_init_method is None:
+            config.dist_init_method = f"tcp://127.0.0.1:{get_open_port()}"
         self.ps = []
         self.events = []
         ctx = mp.get_context("spawn")

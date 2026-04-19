@@ -1,8 +1,13 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
+hf_home = os.getenv("HF_HOME")
+
 import time
 from random import randint, seed
-from nanovllm import LLM, SamplingParams
-# from vllm import LLM, SamplingParams
+from pathlib import Path
+from nanovllm import LLM, SamplingParams # Total: 133966tok, Time: 33.10s, Throughput: 4047.47tok/s
+# from vllm import LLM, SamplingParams # Total: 133966tok, Time: 33.25s, Throughput: 4029.13tok/s
 
 
 def main():
@@ -11,7 +16,8 @@ def main():
     max_input_len = 1024
     max_ouput_len = 1024
 
-    path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
+    model_id = "Qwen/Qwen3-0.6B-FP8"
+    path = str(Path(hf_home) / "models" / model_id)
     llm = LLM(path, enforce_eager=False, max_model_len=4096)
 
     prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]
