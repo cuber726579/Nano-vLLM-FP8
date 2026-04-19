@@ -1,6 +1,7 @@
 # Nano-vLLM-FP8
 
-A lightweight vLLM implementation built from scratch, with an implemented inference pipeline for `Qwen3-0.6B-FP8`.
+This project is an improved implementation based on [Nano-vLLM](https://github.com/GeeeekExplorer/nano-vllm/tree/f438ce463f24700fb1d4671934abd2714d9e865f), adding support for `Qwen3-0.6B-FP8` inference.
+
 
 ## Key Features
 
@@ -9,19 +10,12 @@ A lightweight vLLM implementation built from scratch, with an implemented infere
 ## Installation
 
 ```bash
-pip install git+https://github.com/GeeeekExplorer/nano-vllm.git
+pip install git+https://github.com/cuber726579/Nano-vLLM-FP8.git
 ```
 
 ## Model Download
 
 To download the model weights manually, use the following command:
-```bash
-huggingface-cli download --resume-download Qwen/Qwen3-0.6B \
-  --local-dir ~/huggingface/Qwen3-0.6B/ \
-  --local-dir-use-symlinks False
-```
-
-For the FP8 checkpoint used by this repo:
 ```bash
 huggingface-cli download --resume-download Qwen/Qwen3-0.6B-FP8 \
   --local-dir ~/huggingface/Qwen3-0.6B-FP8/ \
@@ -40,15 +34,15 @@ outputs = llm.generate(prompts, sampling_params)
 outputs[0]["text"]
 ```
 
-`bench_fp8.py` can be used to benchmark the FP8 inference path.
+`bench.py` can be used to benchmark the FP8 inference path.
 
 ## Benchmark
 
 See `bench.py` for benchmark.
 
 **Test Configuration:**
-- Hardware: RTX 4070 Laptop (8GB)
-- Model: Qwen3-0.6B
+- Hardware: RTX 4080 (32GB)
+- Model: Qwen3-0.6B-FP8
 - Total Requests: 256 sequences
 - Input Length: Randomly sampled between 100–1024 tokens
 - Output Length: Randomly sampled between 100–1024 tokens
@@ -56,10 +50,5 @@ See `bench.py` for benchmark.
 **Performance Results:**
 | Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
 |----------------|-------------|----------|-----------------------|
-| vLLM           | 133,966     | 98.37    | 1361.84               |
-| Nano-vLLM      | 133,966     | 93.41    | 1434.13               |
-
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=GeeeekExplorer/nano-vllm&type=Date)](https://www.star-history.com/#GeeeekExplorer/nano-vllm&Date)
+| Nano-vLLM-FP8  | 133,966     | 33.10    | 4047.47               |
+| vLLM           | 133,966     | 33.25    | 4029.13               |
