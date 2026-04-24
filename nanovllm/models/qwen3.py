@@ -24,7 +24,7 @@ class Qwen3Attention(nn.Module):
         rms_norm_eps: float = 1e-06,
         qkv_bias: bool = False,
         rope_theta: float = 10000,
-        rope_scaling: tuple | None = None,
+        rope_type: str = "default",
         linear_method: LinearMethod | None = None,
     ) -> None:
         super().__init__()
@@ -60,7 +60,7 @@ class Qwen3Attention(nn.Module):
             rotary_dim=self.head_dim,
             max_position=max_position,
             base=rope_theta,
-            rope_scaling=rope_scaling,
+            type=rope_type,
         )
         self.attn = Attention(
             self.num_heads,
@@ -139,8 +139,8 @@ class Qwen3DecoderLayer(nn.Module):
             rms_norm_eps=config.rms_norm_eps,
             qkv_bias=getattr(config, 'attention_bias', True),
             head_dim=getattr(config, 'head_dim', None),
-            rope_theta=getattr(config, "rope_theta", 1000000),
-            rope_scaling=getattr(config, "rope_scaling", None),
+            rope_theta=getattr(config, "rope_parameters").get("rope_theta", 1000000),
+            rope_type=getattr(config, "rope_parameters").get("rope_type", "default"),
             linear_method=linear_method,
         )
         self.mlp = Qwen3MLP(

@@ -54,8 +54,10 @@ def get_rope(
     rotary_dim: int,
     max_position: int,
     base: float,
-    rope_scaling: dict | None = None,
+    type: str = "default",
 ):
-    assert rope_scaling is None
-    rotary_emb = RotaryEmbedding(head_size, rotary_dim, max_position, base)
-    return rotary_emb
+    if type == "default":
+        rotary_emb = RotaryEmbedding(head_size, rotary_dim, max_position, base)
+        return rotary_emb
+
+    raise NotImplementedError(f"Unsupported rope_type: {type!r}")
