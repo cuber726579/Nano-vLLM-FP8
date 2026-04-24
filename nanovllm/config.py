@@ -25,6 +25,16 @@ def normalize_rope_config(hf_config: AutoConfig) -> dict:
     return rope_parameters
 
 
+def resolve_runtime_config(hf_config: AutoConfig) -> AutoConfig:
+    if hf_config.model_type == "qwen3_5":
+        text_config = hf_config.text_config
+        text_config.rope_parameters = normalize_rope_config(text_config)
+        return text_config
+
+    hf_config.rope_parameters = normalize_rope_config(hf_config)
+    return hf_config
+
+
 @dataclass
 class Config:
     model: str
@@ -40,15 +50,18 @@ class Config:
     eos: int = -1
     kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
+    enable_prefix_cache: bool = True
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
         assert self.kvcache_block_size % 256 == 0
         assert 1 <= self.tensor_parallel_size <= 8
-        self.hf_config = AutoConfig.from_pretrained(self.model)
-        self.hf_config.rope_parameters = normalize_rope_config(self.hf_config)
+        self.hf_config = resolve_runtime_config(AutoConfig.from_pretrained(self.model))
         self.quant_config = QuantConfig.from_hf_config(self.hf_config, self.quantization)
         if self.quant_config is not None:
             self.quantization = self.quant_config.quant_method
+        if self.hf_config.model_type == "qwen3_5_text":
+            self.enable_prefix_cache = False
+            self.enforce_eager = True
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
         assert self.max_num_batched_tokens >= self.max_model_len

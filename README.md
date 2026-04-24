@@ -1,11 +1,12 @@
 # Nano-vLLM-FP8
 
-This project is an improved implementation based on [Nano-vLLM](https://github.com/GeeeekExplorer/nano-vllm/tree/f438ce463f24700fb1d4671934abd2714d9e865f), adding support for `Qwen3-0.6B-FP8` inference.
+This project is an improved implementation based on [Nano-vLLM](https://github.com/GeeeekExplorer/nano-vllm/tree/f438ce463f24700fb1d4671934abd2714d9e865f), adding support for `Qwen3-0.6B-FP8` inference and text-only inference for local `Qwen3.5-9B` checkpoints.
 
 
 ## Key Features
 
 * **FP8 Inference Support** - End-to-end inference support for `Qwen3-0.6B-FP8`
+* **Qwen3.5 Text Support** - Supports the `qwen3_5` text backbone, including hybrid `linear_attention/full_attention` layers
 * **Chunked Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
 * **RoPE Compatibility** - Adds compatibility for Qwen3 RoPE configs across different transformers versions. See [ROPE.md](./ROPE.md) or upstream [PR #214](https://github.com/GeeeekExplorer/nano-vllm/pull/214) for the compatibility details.
 
@@ -27,7 +28,7 @@ huggingface-cli download --resume-download Qwen/Qwen3-0.6B-FP8 \
 
 ## Quick Start
 
-See `example.py` for a minimal `Qwen3-0.6B-FP8` inference example. The API mirrors vLLM's interface with minor differences in the `LLM.generate` method:
+See `example.py` for a minimal local `Qwen3.5-9B` inference example. The API mirrors vLLM's interface with minor differences in the `LLM.generate` method:
 ```python
 from nanovllm import LLM, SamplingParams
 llm = LLM("/YOUR/MODEL/PATH", enforce_eager=True, tensor_parallel_size=1)
@@ -36,6 +37,8 @@ prompts = ["Hello, Nano-vLLM."]
 outputs = llm.generate(prompts, sampling_params)
 outputs[0]["text"]
 ```
+
+Current limitation: the `Qwen3.5-9B` path is text-only. Vision/video inputs and the multimodal branch of `Qwen3_5ForConditionalGeneration` are not loaded by this runtime.
 
 `bench.py` can be used to benchmark the FP8 inference path.
 

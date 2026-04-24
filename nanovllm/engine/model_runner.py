@@ -7,10 +7,15 @@ from multiprocessing.shared_memory import SharedMemory
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence
 from nanovllm.models.qwen3 import Qwen3ForCausalLM
+from nanovllm.models.qwen3_5 import Qwen3_5ForCausalLM
 from nanovllm.layers.sampler import Sampler
 from nanovllm.quantization import build_linear_method
 from nanovllm.utils.context import set_context, get_context, reset_context
 from nanovllm.utils.loader import load_model
+
+
+def get_model_dtype(hf_config):
+    return getattr(hf_config, "dtype", None) or getattr(hf_config, "torch_dtype", None)
 
 
 class ModelRunner:
@@ -27,13 +32,19 @@ class ModelRunner:
         dist.init_process_group("nccl", self.config.dist_init_method or "tcp://127.0.0.1:2333", world_size=self.world_size, rank=rank)
         torch.cuda.set_device(rank)
         default_dtype = torch.get_default_dtype()
-        torch.set_default_dtype(hf_config.torch_dtype)
+        torch.set_default_dtype(get_model_dtype(hf_config))
         torch.set_default_device("cuda")
         linear_method = build_linear_method(config.quant_config)
-        self.model = Qwen3ForCausalLM(hf_config, linear_method=linear_method)
+        if hf_config.model_type == "qwen3":
+            self.model = Qwen3ForCausalLM(hf_config, linear_method=linear_method)
+        elif hf_config.model_type == "qwen3_5_text":
+            self.model = Qwen3_5ForCausalLM(hf_config, linear_method=linear_method)
+        else:
+            raise NotImplementedError(f"Unsupported model_type: {hf_config.model_type!r}")
         load_model(self.model, config.model)
         self.sampler = Sampler()
         self.warmup_model()
+        self.clear_sequence_states()
         self.allocate_kv_cache()
         if not self.enforce_eager:
             self.capture_cudagraph()
@@ -50,6 +61,7 @@ class ModelRunner:
                 self.loop()
 
     def exit(self):
+        self.clear_sequence_states()
         if self.world_size > 1:
             self.shm.close()
             dist.barrier()
@@ -90,6 +102,12 @@ class ModelRunner:
         method = getattr(self, method_name, None)
         return method(*args)
 
+    def clear_sequence_states(self, seq_ids: list[int] | None = None):
+        for module in self.model.modules():
+            clear_fn = getattr(module, "clear_sequence_states", None)
+            if clear_fn is not None:
+                clear_fn(seq_ids)
+
     def warmup_model(self):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
@@ -111,7 +129,7 @@ class ModelRunner:
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         head_dim = getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
-        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * hf_config.torch_dtype.itemsize
+        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * get_model_dtype(hf_config).itemsize
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
         assert config.num_kvcache_blocks > 0
         self.kv_cache = torch.empty(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
@@ -137,7 +155,10 @@ class ModelRunner:
         max_seqlen_k = 0
         slot_mapping = []
         block_tables = None
+        seq_ids = []
         for seq in seqs:
+            if seq.num_cached_tokens == 0:
+                self.clear_sequence_states([seq.seq_id])
             seqlen = len(seq)
             start = min(seq.num_cached_tokens, seqlen - 1)
             seqlen_q = seq.num_scheduled_tokens
@@ -149,6 +170,7 @@ class ModelRunner:
             cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
             max_seqlen_q = max(seqlen_q, max_seqlen_q)
             max_seqlen_k = max(seqlen_k, max_seqlen_k)
+            seq_ids.append(seq.seq_id)
             if not seq.block_table:  # warmup
                 continue
             start_block = start // self.block_size
@@ -169,7 +191,17 @@ class ModelRunner:
         cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
+        set_context(
+            True,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            slot_mapping,
+            None,
+            block_tables,
+            seq_ids=seq_ids,
+        )
         return input_ids, positions
 
     def prepare_decode(self, seqs: list[Sequence]):
@@ -177,17 +209,19 @@ class ModelRunner:
         positions = []
         slot_mapping = []
         context_lens = []
+        seq_ids = []
         for seq in seqs:
             input_ids.append(seq.last_token)
             positions.append(len(seq) - 1)
             context_lens.append(len(seq))
             slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1)
+            seq_ids.append(seq.seq_id)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
-        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
+        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables, seq_ids=seq_ids)
         return input_ids, positions
 
     def prepare_sample(self, seqs: list[Sequence]):

@@ -75,6 +75,7 @@ class Sequence:
     def __getstate__(self):
         last_state = self.token_ids if self.num_completion_tokens == 0 or self.num_cached_tokens < self.num_tokens else self.last_token
         return (
+            self.seq_id,
             self.num_tokens,
             self.num_prompt_tokens,
             self.num_cached_tokens,
@@ -84,7 +85,7 @@ class Sequence:
         )
 
     def __setstate__(self, state):
-        self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state = state
+        self.seq_id, self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state = state
         if isinstance(last_state, list):
             self.token_ids = last_state
             self.last_token = self.token_ids[-1]

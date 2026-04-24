@@ -11,7 +11,11 @@ class Scheduler:
         self.max_num_seqs = config.max_num_seqs # 一轮调度最多处理多少个序列
         self.max_num_batched_tokens = config.max_num_batched_tokens # 一轮调度最多处理多少个Token
         self.eos = config.eos
-        self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
+        self.block_manager = BlockManager(
+            config.num_kvcache_blocks,
+            config.kvcache_block_size,
+            enable_prefix_cache=config.enable_prefix_cache,
+        )
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
 
@@ -68,6 +72,7 @@ class Scheduler:
         self.waiting.appendleft(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
+        finished_seq_ids = []
         for seq, token_id in zip(seqs, token_ids):
             if is_prefill:
                 seq.num_cached_tokens = min(seq.num_cached_tokens + seq.num_scheduled_tokens, seq.num_tokens)
@@ -81,3 +86,5 @@ class Scheduler:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
+                finished_seq_ids.append(seq.seq_id)
+        return finished_seq_ids
