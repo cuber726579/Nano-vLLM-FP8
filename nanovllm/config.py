@@ -4,6 +4,26 @@ from transformers import AutoConfig
 
 from nanovllm.quantization import QuantConfig
 
+def normalize_rope_config(hf_config: AutoConfig) -> dict:
+    # transformers >= v5.0.0 : rope_parameters
+    if hasattr(hf_config, "rope_parameters") and hf_config.rope_parameters is not None:
+        return hf_config.rope_parameters
+
+    # transformers < v5.0.0 : rope_theta and rope_scaling
+    rope_parameters = {}
+    rope_theta = getattr(hf_config, "rope_theta", None) # Old Attribute
+    if rope_theta is not None:
+        rope_parameters["rope_theta"] = rope_theta
+
+    rope_scaling = getattr(hf_config, "rope_scaling", None) # Old Attribute
+    rope_parameters.setdefault("rope_type", "default")
+    if rope_scaling is not None:
+        rope_parameters.update(dict(rope_scaling))
+        # Attribute Name Change in New Version (rope_scaling.type -> rope_parameters.rope_type)
+        rope_parameters["rope_type"] = rope_parameters.pop("type", "default")
+
+    return rope_parameters
+
 
 @dataclass
 class Config:
@@ -26,6 +46,7 @@ class Config:
         assert self.kvcache_block_size % 256 == 0
         assert 1 <= self.tensor_parallel_size <= 8
         self.hf_config = AutoConfig.from_pretrained(self.model)
+        self.hf_config.rope_parameters = normalize_rope_config(self.hf_config)
         self.quant_config = QuantConfig.from_hf_config(self.hf_config, self.quantization)
         if self.quant_config is not None:
             self.quantization = self.quant_config.quant_method
