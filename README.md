@@ -5,8 +5,10 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
 
 ## Key Features
 
-* FP8 **Inference Support** - End-to-end inference support for `Qwen3-0.6B-FP8`
-* Chunked **Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
+* **FP8 Inference Support** - End-to-end inference support for `Qwen3-0.6B-FP8`
+* **Chunked Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
+* **RoPE Compatibility** - Adds compatibility for Qwen3 RoPE configs across different transformers versions. See [ROPE.md](./ROPE.md) or upstream [PR #214](https://github.com/GeeeekExplorer/nano-vllm/pull/214) for the compatibility details.
+
 
 ## Installation
 
@@ -36,6 +38,12 @@ outputs[0]["text"]
 ```
 
 `bench.py` can be used to benchmark the FP8 inference path.
+
+## RoPE Compatibility
+
+Qwen3 RoPE config compatibility notes are documented in [ROPE.md](./ROPE.md).
+
+
 
 ## Benchmark
 
