@@ -5,7 +5,14 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
 
 ## Key Features
 
-* **FP8 Inference Support** - End-to-end inference support for `Qwen3-0.6B-FP8`
+* **FP8 Inference Support** - End-to-end FP8 inference with the following capabilities:
+  * **FP8 Weight Loading** — Block-wise quantized FP8 weights and `weight_scale_inv` correctly loaded from HF safetensors checkpoints
+  * **Dynamic Activation Quantization** — On-the-fly per-token-block activation quantization via `act_quant_kernel` Triton kernel (e4m3 format)
+  * **Block-wise FP8 GEMM** — `_w8a8_block_fp8_matmul` Triton kernel supporting arbitrary weight block sizes with per-block rescaling
+  * **Tensor Parallelism + FP8** — All linear layer variants (`ReplicatedLinear`, `ColumnParallelLinear`, `RowParallelLinear`, `MergedColumnParallelLinear`, `QKVParallelLinear`) correctly shard both FP8 weights and scales across TP ranks
+  * **Fused Projection Support** — `MergedColumnParallelLinear` (gate+up) and `QKVParallelLinear` (Q+K+V) use `scaled_output_size()` for correct block-scale offset calculation
+  * **Reference Fallback Path** — Gracefully falls back to `reference_fp8_linear` (dequantize then F.linear) when the Triton path is inapplicable (non-contiguous inputs or incompatible shapes)
+  * Currently tested on `Qwen3-0.6B-FP8`; other FP8 checkpoints using block-quantized e4m3 dynamic activation scheme are expected to work
 * **Qwen3.5 Text Support** - Supports the `qwen3_5` text backbone, including hybrid `linear_attention/full_attention` layers
 * **Chunked Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
 * **RoPE Compatibility** - Adds compatibility for Qwen3 RoPE configs across different transformers versions. See [ROPE.md](./ROPE.md) or upstream [PR #214](https://github.com/GeeeekExplorer/nano-vllm/pull/214) for the compatibility details.
@@ -42,11 +49,15 @@ Current limitation: the `Qwen3.5-9B` path is text-only. Vision/video inputs and 
 
 `bench.py` can be used to benchmark the FP8 inference path.
 
-## RoPE Compatibility
 
-Qwen3 RoPE config compatibility notes are documented in [ROPE.md](./ROPE.md).
+## TODO
 
+High-priority FP8 features not yet implemented:
 
+* **`modules_to_not_convert` support** — `QuantConfig.from_hf_config()` currently ignores `modules_to_not_convert` from the checkpoint's `quantization_config`. All Linear layers unconditionally use `Fp8LinearMethod`. HF FP8 checkpoints often exclude sensitive layers (e.g., lm_head) from quantization; forcing FP8 on these layers may cause `ValueError` (dimension not divisible by block size) or silently load incorrect weight data (float weights interpreted as FP8+scale pairs).
+* **`ignored_layers` / `excluded_modules` support** — Same root cause as above; these fields are silently dropped during config parsing.
+
+See [TODO-FP8.md](./TODO-FP8.md) for the full list including medium/low-priority items and known issues.
 
 ## Benchmark
 
