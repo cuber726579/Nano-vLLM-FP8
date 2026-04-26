@@ -4,40 +4,30 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
 
 ---
 
-## 高优先级
+## 已完成
 
 ### 1. `modules_to_not_convert` 支持
 
-- **现状**: `QuantConfig.from_hf_config()` 只解析 `quant_method`/`activation_scheme`/`fmt`/`weight_block_size` 四个字段，`modules_to_not_convert` 被默默忽略。所有 Linear 层无差别传入 `Fp8LinearMethod`。
-- **影响**: HF FP8 checkpoint 经常排除 lm_head 等敏感层不量化。这些层：
+- **状态**: 已从 `quantization_config` 解析并归一到 `QuantConfig.excluded_modules`，Qwen3/Qwen3.5 线性层会携带 HF 模块名用于选择 FP8 或非量化方法。
+- **已覆盖影响**: HF FP8 checkpoint 经常排除 lm_head 等敏感层不量化。这些层：
   - 维度可能不被 FP8 block size 整除，导致 `create_weights()` 报 `ValueError`
   - 即使维度对齐，safetensors 中存的是 float 权重而非 FP8+scale 对，加载会得到错误数据
-- **改动点**:
-  - `QuantConfig` — 新增 `modules_to_not_convert: list[str]` 字段，从 `raw_config` 读取
-  - `build_linear_method()` / 各模型 `__init__` — 根据层名称判断是否用 `UnquantizedLinearMethod` 替代 `Fp8LinearMethod`
-  - 需要确定"层名称"的命名约定（与 HF safetensors key 对应）
 
 ### 2. `ignored_layers` / `excluded_modules` 支持
 
-- **现状**: 同 `modules_to_not_convert`，被默默忽略。
-- **影响**: 同上，取决于具体 checkpoint 的命名方式。
-- **改动点**: 与 `modules_to_not_convert` 统一处理，维护一个排除集合，在创建 Linear 层时查询。
+- **状态**: 已与 `modules_to_not_convert` 统一处理，维护一个排除集合，在创建 Linear 层时查询。
+
+### 3. `e5m2` 格式支持
+
+- **状态**: 已支持 `e4m3`/`e4m3fn` 和 `e5m2`，`Fp8LinearMethod` 会根据 `fmt` 选择对应 torch dtype，并把对应 FP8 最大值传给激活量化 kernel。
 
 ---
 
 ## 中优先级
 
-### 3. `e5m2` 格式支持
-
-- **现状**: `Fp8LinearMethod.__init__` 中 `fmt != "e4m3"` 直接 `raise NotImplementedError`
-- **影响**: 无法加载 `e5m2` 格式的 FP8 checkpoint（E5M2 范围更大精度更低，某些模型用于特定层）
-- **改动点**:
-  - `Fp8LinearMethod` — 根据 `fmt` 选择 `torch.float8_e4m3fn` 或 `torch.float8_e5m2`
-  - `act_quant_kernel` — 调整 scale 上限（E5M2 max ≈ 57344 vs E4M3 max ≈ 448）
-
 ### 4. `activation_scale_ub` 支持
 
-- **现状**: `act_quant_kernel` 中 scale 分母硬编码为 `448.0`（FP8 E4M3 最大值）
+- **现状**: `act_quant_kernel` 已按 FP8 格式使用默认最大值，但还不支持从配置中覆盖 activation scale 上限。
 - **影响**: 无法配置激活 scale 上限，对有 outlier 的模型可能产生较大量化误差
 - **改动点**:
   - `QuantConfig` — 新增 `activation_scale_ub: float | None` 字段

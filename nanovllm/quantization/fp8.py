@@ -10,27 +10,50 @@ from nanovllm.quantization.base import LinearMethod, QuantConfig, ceil_div
 
 
 @triton.jit
-def act_quant_kernel(x_ptr, y_ptr, s_ptr, BLOCK_SIZE: tl.constexpr):
+def act_quant_kernel(x_ptr, y_ptr, s_ptr, BLOCK_SIZE: tl.constexpr, FP8_MAX: tl.constexpr):
     pid = tl.program_id(axis=0)
     offs = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     x = tl.load(x_ptr + offs).to(tl.float32)
-    s = tl.maximum(tl.max(tl.abs(x)) / 448.0, 1e-12)
+    s = tl.maximum(tl.max(tl.abs(x)) / FP8_MAX, 1e-12)
     y = x / s
     y = y.to(y_ptr.dtype.element_ty)
     tl.store(y_ptr + offs, y)
     tl.store(s_ptr + pid, s)
 
 
-def act_quant(x: torch.Tensor, block_size: int = 128) -> tuple[torch.Tensor, torch.Tensor]:
+def get_fp8_format_traits(fmt: str) -> tuple[torch.dtype, float]:
+    fmt = fmt.lower()
+    fmt_to_dtype_name = {
+        "e4m3": "float8_e4m3fn",
+        "e4m3fn": "float8_e4m3fn",
+        "e5m2": "float8_e5m2",
+    }
+    dtype_name = fmt_to_dtype_name.get(fmt)
+    if dtype_name is None:
+        raise NotImplementedError(f"Unsupported FP8 format: {fmt!r}")
+    dtype = getattr(torch, dtype_name, None)
+    if dtype is None:
+        raise NotImplementedError(f"Current PyTorch build does not support torch.{dtype_name}.")
+    return dtype, float(torch.finfo(dtype).max)
+
+
+def act_quant(
+    x: torch.Tensor,
+    block_size: int = 128,
+    dtype: torch.dtype = torch.float8_e4m3fn,
+    fp8_max: float | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     assert x.is_contiguous()
     assert x.shape[-1] % block_size == 0
-    y = torch.empty_like(x, dtype=torch.float8_e4m3fn)
+    if fp8_max is None:
+        fp8_max = float(torch.finfo(dtype).max)
+    y = torch.empty_like(x, dtype=dtype)
     s = x.new_empty(*x.size()[:-1], x.size(-1) // block_size, dtype=torch.float32)
 
     def grid(meta):
         return (triton.cdiv(x.numel(), meta["BLOCK_SIZE"]),)
 
-    act_quant_kernel[grid](x, y, s, BLOCK_SIZE=block_size)
+    act_quant_kernel[grid](x, y, s, BLOCK_SIZE=block_size, FP8_MAX=fp8_max)
     return y, s
 
 
@@ -189,8 +212,6 @@ def reference_fp8_linear(
 class Fp8LinearMethod(LinearMethod):
 
     def __init__(self, quant_config: QuantConfig):
-        if quant_config.fmt != "e4m3":
-            raise NotImplementedError(f"Unsupported FP8 format: {quant_config.fmt!r}")
         if quant_config.activation_scheme != "dynamic":
             raise NotImplementedError(
                 f"Unsupported FP8 activation scheme: {quant_config.activation_scheme!r}"
@@ -199,7 +220,7 @@ class Fp8LinearMethod(LinearMethod):
             raise ValueError("FP8 checkpoints require weight_block_size.")
 
         self.quant_config = quant_config
-        self.weight_dtype = torch.float8_e4m3fn
+        self.weight_dtype, self.fp8_max = get_fp8_format_traits(quant_config.fmt)
         self.weight_block_size = quant_config.weight_block_size
 
     def scaled_output_size(self, size: int) -> int:
@@ -263,7 +284,7 @@ class Fp8LinearMethod(LinearMethod):
                 self.weight_block_size,
             )
 
-        qinput, input_scale = act_quant(x, block_k)
+        qinput, input_scale = act_quant(x, block_k, dtype=self.weight_dtype, fp8_max=self.fp8_max)
         output = w8a8_block_fp8_matmul_triton(
             qinput,
             layer.weight,

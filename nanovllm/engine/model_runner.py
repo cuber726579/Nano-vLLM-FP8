@@ -7,7 +7,6 @@ from multiprocessing.shared_memory import SharedMemory
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence
 from nanovllm.models.qwen3 import Qwen3ForCausalLM
-from nanovllm.models.qwen3_5 import Qwen3_5ForCausalLM
 from nanovllm.layers.sampler import Sampler
 from nanovllm.quantization import build_linear_method
 from nanovllm.utils.context import set_context, get_context, reset_context
@@ -38,6 +37,7 @@ class ModelRunner:
         if hf_config.model_type == "qwen3":
             self.model = Qwen3ForCausalLM(hf_config, linear_method=linear_method)
         elif hf_config.model_type == "qwen3_5_text":
+            from nanovllm.models.qwen3_5 import Qwen3_5ForCausalLM
             self.model = Qwen3_5ForCausalLM(hf_config, linear_method=linear_method)
         else:
             raise NotImplementedError(f"Unsupported model_type: {hf_config.model_type!r}")

@@ -19,11 +19,14 @@ class LinearBase(nn.Module):
         bias: bool = False,
         tp_dim: int | None = None,
         linear_method: LinearMethod | None = None,
+        module_name: str | None = None,
+        module_aliases: tuple[str, ...] = (),
     ):
         super().__init__()
         self.tp_dim = tp_dim
         self.tp_rank = dist.get_rank()
         self.tp_size = dist.get_world_size()
+        self.quant_module_names = tuple(name for name in (module_name, *module_aliases) if name)
         self.linear_method = linear_method or UnquantizedLinearMethod()
         self.linear_method.create_weights(self, input_size, output_size, bias)
 
@@ -45,8 +48,17 @@ class ReplicatedLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
+        module_name: str | None = None,
+        module_aliases: tuple[str, ...] = (),
     ):
-        super().__init__(input_size, output_size, bias, linear_method=linear_method)
+        super().__init__(
+            input_size,
+            output_size,
+            bias,
+            linear_method=linear_method,
+            module_name=module_name,
+            module_aliases=module_aliases,
+        )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param.data.copy_(loaded_weight)
@@ -63,6 +75,8 @@ class ColumnParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
+        module_name: str | None = None,
+        module_aliases: tuple[str, ...] = (),
     ):
         tp_size = dist.get_world_size()
         super().__init__(
@@ -71,6 +85,8 @@ class ColumnParallelLinear(LinearBase):
             bias,
             tp_dim=0,
             linear_method=linear_method,
+            module_name=module_name,
+            module_aliases=module_aliases,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -98,9 +114,18 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         output_sizes: list[int],
         bias: bool = False,
         linear_method: LinearMethod | None = None,
+        module_name: str | None = None,
+        module_aliases: tuple[str, ...] = (),
     ):
         self.output_sizes = output_sizes
-        super().__init__(input_size, sum(output_sizes), bias, linear_method=linear_method)
+        super().__init__(
+            input_size,
+            sum(output_sizes),
+            bias,
+            linear_method=linear_method,
+            module_name=module_name,
+            module_aliases=module_aliases,
+        )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: int):
         param_data = param.data
@@ -133,6 +158,8 @@ class QKVParallelLinear(ColumnParallelLinear):
         total_num_kv_heads: int | None = None,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
+        module_name: str | None = None,
+        module_aliases: tuple[str, ...] = (),
     ):
         tp_size = dist.get_world_size()
         total_num_kv_heads = total_num_kv_heads or total_num_heads
@@ -140,7 +167,14 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.num_heads = divide(total_num_heads, tp_size)
         self.num_kv_heads = divide(total_num_kv_heads, tp_size)
         output_size = (total_num_heads + 2 * total_num_kv_heads) * self.head_size
-        super().__init__(hidden_size, output_size, bias, linear_method=linear_method)
+        super().__init__(
+            hidden_size,
+            output_size,
+            bias,
+            linear_method=linear_method,
+            module_name=module_name,
+            module_aliases=module_aliases,
+        )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: str):
         param_data = param.data
@@ -188,6 +222,8 @@ class RowParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
+        module_name: str | None = None,
+        module_aliases: tuple[str, ...] = (),
     ):
         tp_size = dist.get_world_size()
         super().__init__(
@@ -196,6 +232,8 @@ class RowParallelLinear(LinearBase):
             bias,
             tp_dim=1,
             linear_method=linear_method,
+            module_name=module_name,
+            module_aliases=module_aliases,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
