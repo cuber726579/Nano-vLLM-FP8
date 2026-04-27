@@ -209,24 +209,142 @@ def reference_fp8_linear(
     return F.linear(x, dequant_weight, bias)
 
 
+def _as_scalar_scale(scale: torch.Tensor, device: torch.device) -> torch.Tensor:
+    return scale.max().to(device=device, dtype=torch.float32).reshape(1)
+
+
+def _quantize_static_activation(
+    x: torch.Tensor,
+    input_scale: torch.Tensor,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    scale = _as_scalar_scale(input_scale, x.device)
+    qinput = (x.float() / scale).to(dtype)
+    return qinput, scale
+
+
+def _per_tensor_output_sizes(layer: nn.Module, output_size: int) -> list[int]:
+    output_sizes = getattr(layer, "scale_output_sizes", None)
+    if output_sizes is None:
+        return [output_size]
+    output_sizes = [int(size) for size in output_sizes]
+    if sum(output_sizes) != output_size:
+        raise ValueError(
+            "Invalid packed FP8 per-tensor output sizes: "
+            f"sizes={output_sizes!r}, output_size={output_size}."
+        )
+    return output_sizes
+
+
+def dequantize_per_tensor_fp8(
+    qweight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    output_sizes: list[int] | None,
+    output_dtype: torch.dtype,
+) -> torch.Tensor:
+    if weight_scale.numel() == 1:
+        scale = weight_scale.reshape(1, 1).to(device=qweight.device, dtype=torch.float32)
+        return (qweight.float() * scale).to(output_dtype)
+
+    if output_sizes is None or len(output_sizes) != weight_scale.numel():
+        raise ValueError(
+            "Packed FP8 per-tensor weights require one scale per logical output shard, "
+            f"but got {weight_scale.numel()} scales and output_sizes={output_sizes!r}."
+        )
+
+    chunks = []
+    start = 0
+    for size, scale in zip(output_sizes, weight_scale):
+        end = start + size
+        chunks.append((qweight[start:end].float() * scale.float()).to(output_dtype))
+        start = end
+    return torch.cat(chunks, dim=0)
+
+
+def reference_per_tensor_fp8_linear(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    input_scale: torch.Tensor | None,
+    bias: torch.Tensor | None,
+    output_sizes: list[int] | None,
+    weight_dtype: torch.dtype,
+) -> torch.Tensor:
+    if input_scale is None or input_scale.numel() == 1:
+        if input_scale is None:
+            dequant_input = x
+        else:
+            qinput, scale = _quantize_static_activation(x, input_scale, weight_dtype)
+            dequant_input = (qinput.float() * scale).to(x.dtype)
+        dequant_weight = dequantize_per_tensor_fp8(weight, weight_scale, output_sizes, x.dtype)
+        return F.linear(dequant_input, dequant_weight, bias)
+
+    if output_sizes is None or len(output_sizes) != input_scale.numel():
+        raise ValueError(
+            "Packed static FP8 activation scales require one scale per logical output shard, "
+            f"but got {input_scale.numel()} scales and output_sizes={output_sizes!r}."
+        )
+
+    outputs = []
+    start = 0
+    for size, w_scale, x_scale in zip(output_sizes, weight_scale, input_scale):
+        end = start + size
+        qinput, scale = _quantize_static_activation(x, x_scale, weight_dtype)
+        dequant_input = (qinput.float() * scale).to(x.dtype)
+        dequant_weight = (weight[start:end].float() * w_scale.float()).to(x.dtype)
+        shard_bias = None if bias is None else bias[start:end]
+        outputs.append(F.linear(dequant_input, dequant_weight, shard_bias))
+        start = end
+    return torch.cat(outputs, dim=-1)
+
+
+def scaled_mm_per_tensor_fp8_linear(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    input_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+    weight_dtype: torch.dtype,
+) -> torch.Tensor:
+    qinput, x_scale = _quantize_static_activation(x.view(-1, x.shape[-1]), input_scale, weight_dtype)
+    output_shape = x.shape[:-1] + (weight.shape[0],)
+    output = torch._scaled_mm(
+        qinput,
+        weight.t(),
+        scale_a=x_scale,
+        scale_b=_as_scalar_scale(weight_scale, x.device),
+        out_dtype=x.dtype,
+        bias=bias,
+    )
+    if isinstance(output, tuple):
+        output = output[0]
+    return output.view(output_shape)
+
+
 class Fp8LinearMethod(LinearMethod):
 
     def __init__(self, quant_config: QuantConfig):
-        if quant_config.activation_scheme != "dynamic":
-            raise NotImplementedError(
-                f"Unsupported FP8 activation scheme: {quant_config.activation_scheme!r}"
-            )
+        if quant_config.activation_scheme not in ("dynamic", "static"):
+            raise NotImplementedError(f"Unsupported FP8 activation scheme: {quant_config.activation_scheme!r}")
+        if quant_config.weight_block_size is not None and quant_config.activation_scheme != "dynamic":
+            raise NotImplementedError("Static FP8 activation scales are currently supported for per-tensor weights only.")
         if quant_config.weight_block_size is None:
-            raise ValueError("FP8 checkpoints require weight_block_size.")
+            self.block_quant = False
+        else:
+            self.block_quant = True
 
         self.quant_config = quant_config
         self.weight_dtype, self.fp8_max = get_fp8_format_traits(quant_config.fmt)
         self.weight_block_size = quant_config.weight_block_size
 
     def scaled_output_size(self, size: int) -> int:
+        if self.weight_block_size is None:
+            return size
         return ceil_div(size, self.weight_block_size[0])
 
     def scaled_input_size(self, size: int) -> int:
+        if self.weight_block_size is None:
+            return size
         return ceil_div(size, self.weight_block_size[1])
 
     def create_weights(
@@ -236,28 +354,44 @@ class Fp8LinearMethod(LinearMethod):
         output_size: int,
         bias: bool = False,
     ) -> None:
-        block_n, block_k = self.weight_block_size
-        if input_size % block_k != 0 or output_size % block_n != 0:
-            raise ValueError(
-                "FP8 block quantization requires dimensions divisible by the block size, "
-                f"but got output={output_size}, input={input_size}, block_size={self.weight_block_size}."
-            )
-
         layer.weight = nn.Parameter(
             torch.empty(output_size, input_size, dtype=self.weight_dtype),
             requires_grad=False,
         )
         layer.weight.weight_loader = layer.weight_loader
 
-        layer.weight_scale_inv = nn.Parameter(
-            torch.empty(
-                self.scaled_output_size(output_size),
-                self.scaled_input_size(input_size),
-                dtype=torch.float32,
-            ),
-            requires_grad=False,
-        )
-        layer.weight_scale_inv.weight_loader = layer.weight_scale_loader
+        if self.block_quant:
+            block_n, block_k = self.weight_block_size
+            if input_size % block_k != 0 or output_size % block_n != 0:
+                raise ValueError(
+                    "FP8 block quantization requires dimensions divisible by the block size, "
+                    f"but got output={output_size}, input={input_size}, block_size={self.weight_block_size}."
+                )
+
+            layer.weight_scale_inv = nn.Parameter(
+                torch.empty(
+                    self.scaled_output_size(output_size),
+                    self.scaled_input_size(input_size),
+                    dtype=torch.float32,
+                ),
+                requires_grad=False,
+            )
+            layer.weight_scale_inv.weight_loader = layer.weight_scale_loader
+            layer.register_parameter("weight_scale", None)
+            layer.register_parameter("input_scale", None)
+            layer.fp8_output_sizes = None
+        else:
+            output_sizes = _per_tensor_output_sizes(layer, output_size)
+            num_scales = len(output_sizes)
+            layer.weight_scale = nn.Parameter(torch.empty(num_scales, dtype=torch.float32), requires_grad=False)
+            layer.weight_scale.weight_loader = layer.per_tensor_scale_loader
+            if self.quant_config.activation_scheme == "static":
+                layer.input_scale = nn.Parameter(torch.empty(num_scales, dtype=torch.float32), requires_grad=False)
+                layer.input_scale.weight_loader = layer.per_tensor_scale_loader
+            else:
+                layer.register_parameter("input_scale", None)
+            layer.register_parameter("weight_scale_inv", None)
+            layer.fp8_output_sizes = output_sizes
 
         if bias:
             layer.bias = nn.Parameter(torch.empty(output_size), requires_grad=False)
@@ -271,10 +405,45 @@ class Fp8LinearMethod(LinearMethod):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        block_k = self.weight_block_size[1]
         x = x.contiguous()
         if bias is None:
             bias = layer.bias
+
+        if not self.block_quant:
+            input_scale = layer.input_scale
+            if self.quant_config.activation_scheme == "static" and input_scale is None:
+                raise ValueError("Static FP8 activation scheme requires an input_scale parameter.")
+
+            if (
+                x.is_cuda
+                and input_scale is not None
+                and input_scale.numel() == 1
+                and layer.weight_scale.numel() == 1
+                and hasattr(torch, "_scaled_mm")
+            ):
+                try:
+                    return scaled_mm_per_tensor_fp8_linear(
+                        x,
+                        layer.weight,
+                        layer.weight_scale,
+                        input_scale,
+                        bias,
+                        self.weight_dtype,
+                    )
+                except (RuntimeError, TypeError, NotImplementedError):
+                    pass
+
+            return reference_per_tensor_fp8_linear(
+                x,
+                layer.weight,
+                layer.weight_scale,
+                input_scale,
+                bias,
+                layer.fp8_output_sizes,
+                self.weight_dtype,
+            )
+
+        block_k = self.weight_block_size[1]
         if not x.is_cuda or x.shape[-1] % block_k != 0:
             return reference_fp8_linear(
                 x,

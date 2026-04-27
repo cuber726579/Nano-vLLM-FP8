@@ -39,6 +39,37 @@ class LinearBase(nn.Module):
     def weight_scale_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param.data.copy_(loaded_weight)
 
+    def per_tensor_scale_loader(
+        self,
+        param: nn.Parameter,
+        loaded_weight: torch.Tensor,
+        loaded_shard_id: int | str | None = None,
+    ):
+        loaded_weight = loaded_weight.reshape(-1)
+        if loaded_shard_id is None:
+            if loaded_weight.numel() != param.data.numel():
+                if loaded_weight.numel() != 1 or param.data.numel() != 1:
+                    raise ValueError(
+                        "Cannot load FP8 per-tensor scale with shape "
+                        f"{tuple(loaded_weight.shape)} into parameter shape {tuple(param.data.shape)}."
+                    )
+            param.data.copy_(loaded_weight.reshape_as(param.data))
+            return
+
+        shard_idx = self._scale_shard_id_to_index(loaded_shard_id)
+        if loaded_weight.numel() != 1:
+            raise ValueError(
+                "Packed FP8 per-tensor scale shards must be scalar, "
+                f"but got shape {tuple(loaded_weight.shape)} for shard {loaded_shard_id!r}."
+            )
+        param.data[shard_idx].copy_(loaded_weight[0])
+
+    @staticmethod
+    def _scale_shard_id_to_index(loaded_shard_id: int | str) -> int:
+        if isinstance(loaded_shard_id, str):
+            return {"q": 0, "k": 1, "v": 2}[loaded_shard_id]
+        return int(loaded_shard_id)
+
 
 class ReplicatedLinear(LinearBase):
 
@@ -118,6 +149,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         module_aliases: tuple[str, ...] = (),
     ):
         self.output_sizes = output_sizes
+        tp_size = dist.get_world_size()
+        self.scale_output_sizes = [divide(size, tp_size) for size in output_sizes]
         super().__init__(
             input_size,
             sum(output_sizes),
@@ -166,6 +199,11 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.head_size = head_size
         self.num_heads = divide(total_num_heads, tp_size)
         self.num_kv_heads = divide(total_num_kv_heads, tp_size)
+        self.scale_output_sizes = [
+            self.num_heads * self.head_size,
+            self.num_kv_heads * self.head_size,
+            self.num_kv_heads * self.head_size,
+        ]
         output_size = (total_num_heads + 2 * total_num_kv_heads) * self.head_size
         super().__init__(
             hidden_size,

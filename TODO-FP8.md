@@ -21,11 +21,20 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
 
 - **状态**: 已支持 `e4m3`/`e4m3fn` 和 `e5m2`，`Fp8LinearMethod` 会根据 `fmt` 选择对应 torch dtype，并把对应 FP8 最大值传给激活量化 kernel。
 
+### 4. 静态激活量化 (`activation_scheme="static"`)
+
+- **状态**: 已支持常见 AutoFP8/vLLM 风格的 per-tensor 静态激活量化 checkpoint。
+- **已覆盖影响**:
+  - `QuantConfig` 可解析 `activation_scheme="static"` 且允许无 `weight_block_size` 的 per-tensor FP8 权重
+  - `Fp8LinearMethod` 会注册并加载 `weight_scale` / `input_scale`
+  - `apply()` 静态路径使用 checkpoint 预存 `input_scale`，不再动态统计激活 scale
+  - 已补充 Qwen2 text runtime，便于使用小型静态 FP8 模型做端到端验证
+
 ---
 
 ## 中优先级
 
-### 4. `activation_scale_ub` 支持
+### 5. `activation_scale_ub` 支持
 
 - **现状**: `act_quant_kernel` 已按 FP8 格式使用默认最大值，但还不支持从配置中覆盖 activation scale 上限。
 - **影响**: 无法配置激活 scale 上限，对有 outlier 的模型可能产生较大量化误差
@@ -33,17 +42,6 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
   - `QuantConfig` — 新增 `activation_scale_ub: float | None` 字段
   - `Fp8LinearMethod` — 将值传给 `act_quant()`
   - `act_quant_kernel` — 用 kernel 参数替代硬编码常量
-
-### 5. 静态激活量化 (`activation_scheme="static"`)
-
-- **现状**: `Fp8LinearMethod.__init__` 中直接 `raise NotImplementedError`
-- **影响**: 无法使用预校准的静态 activation scale，每次前向都要重新量化激活
-- **改动点**:
-  - 权重加载时从 checkpoint 读取预存 activation scale
-  - `Fp8LinearMethod.apply()` — static 路径跳过 `act_quant()`，直接用预存 scale
-  - 需要定义 activation scale 的存储格式（per-tensor / per-channel / per-block）
-
----
 
 ## 低优先级
 

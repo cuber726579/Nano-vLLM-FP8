@@ -8,12 +8,13 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
 * **FP8 Inference Support** - End-to-end FP8 inference with the following capabilities:
   * **FP8 Weight Loading** — Block-wise quantized FP8 weights and `weight_scale_inv` correctly loaded from HF safetensors checkpoints
   * **Dynamic Activation Quantization** — On-the-fly per-token-block activation quantization via `act_quant_kernel` Triton kernel (`e4m3`/`e5m2` formats)
+  * **Static Activation Quantization** — Loads pre-calibrated per-tensor `input_scale` / `weight_scale` from AutoFP8-style checkpoints and reuses the static activation scale during inference
   * **Block-wise FP8 GEMM** — `_w8a8_block_fp8_matmul` Triton kernel supporting arbitrary weight block sizes with per-block rescaling
   * **Tensor Parallelism + FP8** — All linear layer variants (`ReplicatedLinear`, `ColumnParallelLinear`, `RowParallelLinear`, `MergedColumnParallelLinear`, `QKVParallelLinear`) correctly shard both FP8 weights and scales across TP ranks
   * **Fused Projection Support** — `MergedColumnParallelLinear` (gate+up) and `QKVParallelLinear` (Q+K+V) use `scaled_output_size()` for correct block-scale offset calculation
   * **HF Exclusion List Support** — Honors `modules_to_not_convert`, `ignored_layers`, and `excluded_modules` from `quantization_config`
   * **Reference Fallback Path** — Gracefully falls back to `reference_fp8_linear` (dequantize then F.linear) when the Triton path is inapplicable (non-contiguous inputs or incompatible shapes)
-  * Currently tested on `Qwen3-0.6B-FP8` and `Qwen3-4B-Thinking-2507-FP8`; other FP8 checkpoints using block-quantized e4m3 dynamic activation scheme are expected to work
+  * Currently tested on `Qwen3-0.6B-FP8`, `Qwen3-4B-Thinking-2507-FP8`, and `RedHatAI/Qwen2-0.5B-Instruct-FP8`; other FP8 checkpoints using block-quantized dynamic activations or per-tensor static activations are expected to work
 * **Qwen3.5 Text Support** - Supports the `qwen3_5` text backbone, including hybrid `linear_attention/full_attention` layers
 * **Chunked Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
 * **RoPE Compatibility** - Adds compatibility for Qwen3 RoPE configs across different transformers versions. See [ROPE.md](./ROPE.md) or upstream [PR #214](https://github.com/GeeeekExplorer/nano-vllm/pull/214) for the compatibility details.

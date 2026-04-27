@@ -52,6 +52,8 @@ class QuantConfig:
             raise NotImplementedError(f"Unsupported quantization method: {quant_method!r}")
 
         activation_scheme = raw_config.get("activation_scheme", "dynamic")
+        if activation_scheme not in ("dynamic", "static"):
+            raise NotImplementedError(f"Unsupported FP8 activation scheme: {activation_scheme!r}")
         fmt = raw_config.get("fmt", "e4m3")
         weight_block_size = raw_config.get("weight_block_size")
         if weight_block_size is not None:
