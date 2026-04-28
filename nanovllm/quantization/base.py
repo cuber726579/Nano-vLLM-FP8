@@ -97,6 +97,33 @@ class QuantConfig:
                 return True
         return False
 
+    def get_quant_method(self, layer: nn.Module, prefix: str | None) -> "LinearMethod | None":
+        from nanovllm.layers.linear import LinearBase
+
+        if not isinstance(layer, LinearBase):
+            raise TypeError(
+                "QuantConfig.get_quant_method() only supports LinearBase layers, "
+                f"got {type(layer).__name__}."
+            )
+
+        module_names = tuple(name for name in (prefix, *getattr(layer, "quant_module_aliases", ())) if name)
+        excluded = [name for name in module_names if self.is_module_excluded(name)]
+        if excluded:
+            alias_names = module_names[1:]
+            excluded_aliases = [name for name in alias_names if self.is_module_excluded(name)]
+            if excluded_aliases and len(excluded_aliases) != len(alias_names):
+                raise ValueError(
+                    "Cannot partially exclude a packed linear layer from quantization: "
+                    f"matched={excluded_aliases!r}, aliases={alias_names!r}."
+                )
+            return UnquantizedLinearMethod()
+
+        if self.quant_method == "fp8":
+            from nanovllm.quantization.fp8 import Fp8LinearMethod
+
+            return Fp8LinearMethod(self)
+        raise NotImplementedError(f"Unsupported quantization method: {self.quant_method!r}")
+
 
 class LinearMethod(ABC):
 
@@ -154,61 +181,11 @@ class UnquantizedLinearMethod(LinearMethod):
         return F.linear(x, layer.weight, bias)
 
 
-class SelectiveLinearMethod(LinearMethod):
-
-    def __init__(self, quant_config: QuantConfig):
-        self.quant_config = quant_config
-        self.unquantized_method = UnquantizedLinearMethod()
-        if quant_config.quant_method == "fp8":
-            from nanovllm.quantization.fp8 import Fp8LinearMethod
-
-            self.quantized_method = Fp8LinearMethod(quant_config)
-        else:
-            raise NotImplementedError(f"Unsupported quantization method: {quant_config.quant_method!r}")
-
-    def _select_method(self, layer: nn.Module) -> LinearMethod:
-        module_names = tuple(getattr(layer, "quant_module_names", ()))
-        excluded = [name for name in module_names if self.quant_config.is_module_excluded(name)]
-        if not excluded:
-            return self.quantized_method
-
-        if len(module_names) > 1:
-            alias_names = module_names[1:]
-            excluded_aliases = [name for name in alias_names if self.quant_config.is_module_excluded(name)]
-            if excluded_aliases and len(excluded_aliases) != len(alias_names):
-                raise ValueError(
-                    "Cannot partially exclude a packed linear layer from quantization: "
-                    f"matched={excluded_aliases!r}, aliases={alias_names!r}."
-                )
-        return self.unquantized_method
-
-    def scaled_output_size(self, size: int) -> int:
-        return self.quantized_method.scaled_output_size(size)
-
-    def scaled_input_size(self, size: int) -> int:
-        return self.quantized_method.scaled_input_size(size)
-
-    def create_weights(
-        self,
-        layer: nn.Module,
-        input_size: int,
-        output_size: int,
-        bias: bool = False,
-    ) -> None:
-        selected_method = self._select_method(layer)
-        layer.linear_method = selected_method
-        selected_method.create_weights(layer, input_size, output_size, bias)
-
-    def apply(
-        self,
-        layer: nn.Module,
-        x: torch.Tensor,
-        bias: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        return self._select_method(layer).apply(layer, x, bias=bias)
-
-
 def build_linear_method(quant_config: QuantConfig | None) -> LinearMethod:
     if quant_config is None:
         return UnquantizedLinearMethod()
-    return SelectiveLinearMethod(quant_config)
+    if quant_config.quant_method == "fp8":
+        from nanovllm.quantization.fp8 import Fp8LinearMethod
+
+        return Fp8LinearMethod(quant_config)
+    raise NotImplementedError(f"Unsupported quantization method: {quant_config.quant_method!r}")

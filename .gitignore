@@ -1,6 +1,6 @@
 # Auxiliary File
 example_vllm.py
-my.ipynb
+*.ipynb
 download.sh
 bench_fp8.py
 

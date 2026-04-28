@@ -9,7 +9,7 @@ from nanovllm.layers.layernorm import RMSNorm
 from nanovllm.layers.linear import QKVParallelLinear, MergedColumnParallelLinear, RowParallelLinear
 from nanovllm.layers.rotary_embedding import get_rope
 from nanovllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
-from nanovllm.quantization.base import LinearMethod
+from nanovllm.quantization.base import QuantConfig
 
 
 class Qwen3Attention(nn.Module):
@@ -25,7 +25,7 @@ class Qwen3Attention(nn.Module):
         qkv_bias: bool = False,
         rope_theta: float = 10000,
         rope_type: str = "default",
-        linear_method: LinearMethod | None = None,
+        quant_config: QuantConfig | None = None,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -48,16 +48,16 @@ class Qwen3Attention(nn.Module):
             self.total_num_heads,
             self.total_num_kv_heads,
             bias=qkv_bias,
-            linear_method=linear_method,
-            module_name=f"{prefix}.qkv_proj" if prefix else None,
+            quant_config=quant_config,
+            prefix=f"{prefix}.qkv_proj" if prefix else None,
             module_aliases=tuple(f"{prefix}.{name}" for name in ("q_proj", "k_proj", "v_proj")) if prefix else (),
         )
         self.o_proj = RowParallelLinear(
             self.total_num_heads * self.head_dim,
             hidden_size,
             bias=False,
-            linear_method=linear_method,
-            module_name=f"{prefix}.o_proj" if prefix else None,
+            quant_config=quant_config,
+            prefix=f"{prefix}.o_proj" if prefix else None,
         )
         self.rotary_emb = get_rope(
             self.head_dim,
@@ -102,7 +102,7 @@ class Qwen3MLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        linear_method: LinearMethod | None = None,
+        quant_config: QuantConfig | None = None,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -110,16 +110,16 @@ class Qwen3MLP(nn.Module):
             hidden_size,
             [intermediate_size] * 2,
             bias=False,
-            linear_method=linear_method,
-            module_name=f"{prefix}.gate_up_proj" if prefix else None,
+            quant_config=quant_config,
+            prefix=f"{prefix}.gate_up_proj" if prefix else None,
             module_aliases=tuple(f"{prefix}.{name}" for name in ("gate_proj", "up_proj")) if prefix else (),
         )
         self.down_proj = RowParallelLinear(
             intermediate_size,
             hidden_size,
             bias=False,
-            linear_method=linear_method,
-            module_name=f"{prefix}.down_proj" if prefix else None,
+            quant_config=quant_config,
+            prefix=f"{prefix}.down_proj" if prefix else None,
         )
         assert hidden_act == "silu"
         self.act_fn = SiluAndMul()
@@ -137,7 +137,7 @@ class Qwen3DecoderLayer(nn.Module):
         self,
         config: Qwen3Config,
         layer_idx: int,
-        linear_method: LinearMethod | None = None,
+        quant_config: QuantConfig | None = None,
     ) -> None:
         super().__init__()
         prefix = f"model.layers.{layer_idx}"
@@ -151,14 +151,14 @@ class Qwen3DecoderLayer(nn.Module):
             head_dim=getattr(config, 'head_dim', None),
             rope_theta=getattr(config, "rope_parameters").get("rope_theta", 1000000),
             rope_type=getattr(config, "rope_parameters").get("rope_type", "default"),
-            linear_method=linear_method,
+            quant_config=quant_config,
             prefix=f"{prefix}.self_attn",
         )
         self.mlp = Qwen3MLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
-            linear_method=linear_method,
+            quant_config=quant_config,
             prefix=f"{prefix}.mlp",
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -185,13 +185,13 @@ class Qwen3Model(nn.Module):
     def __init__(
         self,
         config: Qwen3Config,
-        linear_method: LinearMethod | None = None,
+        quant_config: QuantConfig | None = None,
     ) -> None:
         super().__init__()
         self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList(
             [
-                Qwen3DecoderLayer(config, layer_idx, linear_method=linear_method)
+                Qwen3DecoderLayer(config, layer_idx, quant_config=quant_config)
                 for layer_idx in range(config.num_hidden_layers)
             ]
         )
@@ -222,10 +222,10 @@ class Qwen3ForCausalLM(nn.Module):
     def __init__(
         self,
         config: Qwen3Config,
-        linear_method: LinearMethod | None = None,
+        quant_config: QuantConfig | None = None,
     ) -> None:
         super().__init__()
-        self.model = Qwen3Model(config, linear_method=linear_method)
+        self.model = Qwen3Model(config, quant_config=quant_config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         if config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data

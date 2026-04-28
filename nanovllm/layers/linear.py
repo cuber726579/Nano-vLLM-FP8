@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.distributed as dist
 
-from nanovllm.quantization.base import LinearMethod, UnquantizedLinearMethod
+from nanovllm.quantization.base import LinearMethod, QuantConfig, UnquantizedLinearMethod
 
 
 def divide(numerator, denominator):
@@ -19,14 +19,18 @@ class LinearBase(nn.Module):
         bias: bool = False,
         tp_dim: int | None = None,
         linear_method: LinearMethod | None = None,
-        module_name: str | None = None,
+        quant_config: QuantConfig | None = None,
+        prefix: str | None = None,
         module_aliases: tuple[str, ...] = (),
     ):
         super().__init__()
         self.tp_dim = tp_dim
         self.tp_rank = dist.get_rank()
         self.tp_size = dist.get_world_size()
-        self.quant_module_names = tuple(name for name in (module_name, *module_aliases) if name)
+        self.quant_prefix = prefix
+        self.quant_module_aliases = tuple(module_aliases)
+        if linear_method is None and quant_config is not None:
+            linear_method = quant_config.get_quant_method(self, prefix)
         self.linear_method = linear_method or UnquantizedLinearMethod()
         self.linear_method.create_weights(self, input_size, output_size, bias)
 
@@ -79,7 +83,8 @@ class ReplicatedLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
-        module_name: str | None = None,
+        quant_config: QuantConfig | None = None,
+        prefix: str | None = None,
         module_aliases: tuple[str, ...] = (),
     ):
         super().__init__(
@@ -87,7 +92,8 @@ class ReplicatedLinear(LinearBase):
             output_size,
             bias,
             linear_method=linear_method,
-            module_name=module_name,
+            quant_config=quant_config,
+            prefix=prefix,
             module_aliases=module_aliases,
         )
 
@@ -106,7 +112,8 @@ class ColumnParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
-        module_name: str | None = None,
+        quant_config: QuantConfig | None = None,
+        prefix: str | None = None,
         module_aliases: tuple[str, ...] = (),
     ):
         tp_size = dist.get_world_size()
@@ -116,7 +123,8 @@ class ColumnParallelLinear(LinearBase):
             bias,
             tp_dim=0,
             linear_method=linear_method,
-            module_name=module_name,
+            quant_config=quant_config,
+            prefix=prefix,
             module_aliases=module_aliases,
         )
 
@@ -145,7 +153,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         output_sizes: list[int],
         bias: bool = False,
         linear_method: LinearMethod | None = None,
-        module_name: str | None = None,
+        quant_config: QuantConfig | None = None,
+        prefix: str | None = None,
         module_aliases: tuple[str, ...] = (),
     ):
         self.output_sizes = output_sizes
@@ -156,7 +165,8 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             sum(output_sizes),
             bias,
             linear_method=linear_method,
-            module_name=module_name,
+            quant_config=quant_config,
+            prefix=prefix,
             module_aliases=module_aliases,
         )
 
@@ -191,7 +201,8 @@ class QKVParallelLinear(ColumnParallelLinear):
         total_num_kv_heads: int | None = None,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
-        module_name: str | None = None,
+        quant_config: QuantConfig | None = None,
+        prefix: str | None = None,
         module_aliases: tuple[str, ...] = (),
     ):
         tp_size = dist.get_world_size()
@@ -210,7 +221,8 @@ class QKVParallelLinear(ColumnParallelLinear):
             output_size,
             bias,
             linear_method=linear_method,
-            module_name=module_name,
+            quant_config=quant_config,
+            prefix=prefix,
             module_aliases=module_aliases,
         )
 
@@ -260,7 +272,8 @@ class RowParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         linear_method: LinearMethod | None = None,
-        module_name: str | None = None,
+        quant_config: QuantConfig | None = None,
+        prefix: str | None = None,
         module_aliases: tuple[str, ...] = (),
     ):
         tp_size = dist.get_world_size()
@@ -270,7 +283,8 @@ class RowParallelLinear(LinearBase):
             bias,
             tp_dim=1,
             linear_method=linear_method,
-            module_name=module_name,
+            quant_config=quant_config,
+            prefix=prefix,
             module_aliases=module_aliases,
         )
 
