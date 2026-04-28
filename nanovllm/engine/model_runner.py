@@ -15,6 +15,20 @@ def get_model_dtype(hf_config):
     return getattr(hf_config, "dtype", None) or getattr(hf_config, "torch_dtype", None)
 
 
+def get_kv_cache_dtype(config: Config):
+    if config.kv_cache_dtype is None:
+        return get_model_dtype(config.hf_config)
+    if config.kv_cache_dtype == "fp8_e4m3":
+        return torch.float8_e4m3fn
+    if config.kv_cache_dtype == "fp8_e5m2":
+        return torch.float8_e5m2
+    raise ValueError(f"Unsupported kv_cache_dtype: {config.kv_cache_dtype!r}")
+
+
+def get_dtype_size(dtype: torch.dtype) -> int:
+    return torch.empty((), dtype=dtype).element_size()
+
+
 def build_model_from_config(config: Config):
     hf_config = config.hf_config
     if hf_config.model_type == "qwen2":
@@ -137,10 +151,19 @@ class ModelRunner:
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         head_dim = getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
-        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * get_model_dtype(hf_config).itemsize
+        kv_cache_dtype = get_kv_cache_dtype(config)
+        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * get_dtype_size(kv_cache_dtype)
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
         assert config.num_kvcache_blocks > 0
-        self.kv_cache = torch.empty(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
+        self.kv_cache = torch.empty(
+            2,
+            hf_config.num_hidden_layers,
+            config.num_kvcache_blocks,
+            self.block_size,
+            num_kv_heads,
+            head_dim,
+            dtype=kv_cache_dtype,
+        )
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):

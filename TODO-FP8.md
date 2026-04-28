@@ -30,11 +30,21 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
   - `apply()` 静态路径使用 checkpoint 预存 `input_scale`，不再动态统计激活 scale
   - 已补充 Qwen2 text runtime，便于使用小型静态 FP8 模型做端到端验证
 
+### 5. FP8 KV Cache
+
+- **状态**: 已支持 `kv_cache_dtype="fp8"` / `"fp8_e4m3"` / `"fp8_e5m2"`；`"fp8"` 会归一为 `"fp8_e4m3"`。
+- **已覆盖影响**:
+  - KV Cache 可按 FP8 dtype 分配，显存按 1 byte/element 估算 block 数量
+  - Attention 写入 cache 时直接存为 FP8，读取时 gather 回当前计算 dtype 再调用 FlashAttention
+  - 当前 FP8 KV cache 路径会强制 eager，避免动态 gather 形状与 CUDA graph 捕获冲突
+- **待补测试**:
+  - 覆盖 `kv_cache_dtype="fp8"` / `"fp8_e4m3"` / `"fp8_e5m2"` 的配置归一化、cache dtype 分配、prefill/decode 路径和基础生成结果
+
 ---
 
 ## 中优先级
 
-### 5. `activation_scale_ub` 支持
+### 6. `activation_scale_ub` 支持
 
 - **现状**: `act_quant_kernel` 已按 FP8 格式使用默认最大值，但还不支持从配置中覆盖 activation scale 上限。
 - **影响**: 无法配置激活 scale 上限，对有 outlier 的模型可能产生较大量化误差
@@ -44,15 +54,6 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
   - `act_quant_kernel` — 用 kernel 参数替代硬编码常量
 
 ## 低优先级
-
-### 6. FP8 KV Cache
-
-- **现状**: KV Cache 使用模型原生 dtype（BF16/FP16），未做 FP8 量化
-- **影响**: KV Cache 是推理时主要显存消费者之一，FP8 可节省约 50% KV Cache 显存
-- **改动点**:
-  - `kvcache.py` — 新增 FP8 存储格式
-  - Attention 层 — k/v 写入 cache 前做 `act_quant()`，读取后做 scale 还原
-  - 需注意精度损失对长序列质量的影响
 
 ### 7. FP8 Attention 计算
 

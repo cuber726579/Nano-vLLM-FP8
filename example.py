@@ -17,6 +17,7 @@ def main():
         max_model_len=512,
         max_num_batched_tokens=512,
         gpu_memory_utilization=0.5,
+        kv_cache_dtype="fp8"
     )
 
     sampling_params = SamplingParams(temperature=0.6, max_tokens=256)

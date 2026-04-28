@@ -4,6 +4,13 @@ from transformers import AutoConfig
 
 from nanovllm.quantization import QuantConfig
 
+KV_CACHE_DTYPE_ALIASES = {
+    "fp8": "fp8_e4m3",
+    "fp8_e4m3": "fp8_e4m3",
+    "fp8_e5m2": "fp8_e5m2",
+}
+
+
 def normalize_rope_config(hf_config: AutoConfig) -> dict:
     # transformers >= v5.0.0 : rope_parameters
     if hasattr(hf_config, "rope_parameters") and hf_config.rope_parameters is not None:
@@ -50,6 +57,7 @@ class Config:
     eos: int = -1
     kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
+    kv_cache_dtype: str | None = None
     enable_prefix_cache: bool = True
 
     def __post_init__(self):
@@ -62,6 +70,12 @@ class Config:
             self.quantization = self.quant_config.quant_method
         if self.hf_config.model_type == "qwen3_5_text":
             self.enable_prefix_cache = False
+            self.enforce_eager = True
+        if self.kv_cache_dtype is not None:
+            if self.kv_cache_dtype not in KV_CACHE_DTYPE_ALIASES:
+                choices = ", ".join(KV_CACHE_DTYPE_ALIASES)
+                raise ValueError(f"Unsupported kv_cache_dtype: {self.kv_cache_dtype!r}. Choose from: {choices}")
+            self.kv_cache_dtype = KV_CACHE_DTYPE_ALIASES[self.kv_cache_dtype]
             self.enforce_eager = True
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
         assert self.max_num_batched_tokens >= self.max_model_len

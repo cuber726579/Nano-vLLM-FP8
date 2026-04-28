@@ -14,6 +14,7 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
   * **Fused Projection Support** — `MergedColumnParallelLinear` (gate+up) and `QKVParallelLinear` (Q+K+V) use `scaled_output_size()` for correct block-scale offset calculation
   * **HF Exclusion List Support** — Honors `modules_to_not_convert`, `ignored_layers`, and `excluded_modules` from `quantization_config`
   * **Reference Fallback Path** — Gracefully falls back to `reference_fp8_linear` (dequantize then F.linear) when the Triton path is inapplicable (non-contiguous inputs or incompatible shapes)
+  * **FP8 KV Cache** — `kv_cache_dtype="fp8"` / `"fp8_e4m3"` / `"fp8_e5m2"` stores paged KV cache in FP8; `"fp8"` maps to `"fp8_e4m3"`
   * Currently tested on `Qwen3-0.6B-FP8`, `Qwen3-4B-Thinking-2507-FP8`, and `RedHatAI/Qwen2-0.5B-Instruct-FP8`; other FP8 checkpoints using block-quantized dynamic activations or per-tensor static activations are expected to work
 * **Qwen3.5 Text Support** - Supports the `qwen3_5` text backbone, including hybrid `linear_attention/full_attention` layers
 * **Chunked Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
@@ -40,7 +41,7 @@ huggingface-cli download --resume-download Qwen/Qwen3-0.6B-FP8 \
 See `example.py` for a minimal local `Qwen3.5-9B` inference example. The API mirrors vLLM's interface with minor differences in the `LLM.generate` method:
 ```python
 from nanovllm import LLM, SamplingParams
-llm = LLM("/YOUR/MODEL/PATH", enforce_eager=True, tensor_parallel_size=1)
+llm = LLM("/YOUR/MODEL/PATH", enforce_eager=True, tensor_parallel_size=1, kv_cache_dtype="fp8")
 sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
 prompts = ["Hello, Nano-vLLM."]
 outputs = llm.generate(prompts, sampling_params)
@@ -54,7 +55,7 @@ Current limitation: the `Qwen3.5-9B` path is text-only. Vision/video inputs and 
 
 ## TODO
 
-Remaining FP8 features not yet implemented include broader quantization formats and FP8 KV cache support.
+Remaining FP8 features not yet implemented include broader quantization formats and FP8 attention kernels.
 
 See [TODO-FP8.md](./TODO-FP8.md) for the full list including medium/low-priority items and known issues.
 
