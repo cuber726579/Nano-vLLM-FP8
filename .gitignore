@@ -7,6 +7,9 @@ bench_fp8.py
 # Checkpoints
 ckpt/
 
+# Local symlinks
+/Huggingface
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
