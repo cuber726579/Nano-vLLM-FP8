@@ -4,6 +4,9 @@ example_vllm.py
 download.sh
 bench_fp8.py
 
+# Log
+logs/
+
 # Checkpoints
 ckpt/
 
@@ -89,6 +92,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # IPython
 profile_default/
