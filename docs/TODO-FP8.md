@@ -12,14 +12,17 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
 - **已覆盖影响**: HF FP8 checkpoint 经常排除 lm_head 等敏感层不量化。这些层：
   - 维度可能不被 FP8 block size 整除，导致 `create_weights()` 报 `ValueError`
   - 即使维度对齐，safetensors 中存的是 float 权重而非 FP8+scale 对，加载会得到错误数据
+- **测试模型** : Qwen/Qwen3-4B-Instruct-2507-FP8
 
 ### 2. `ignored_layers` / `excluded_modules` 支持
 
 - **状态**: 已与 `modules_to_not_convert` 统一处理，维护一个排除集合，在创建 Linear 层时查询。
+- **测试模型**: 未测试
 
 ### 3. `e5m2` 格式支持
 
 - **状态**: 已支持 `e4m3`/`e4m3fn` 和 `e5m2`，`Fp8LinearMethod` 会根据 `fmt` 选择对应 torch dtype，并把对应 FP8 最大值传给激活量化 kernel。
+- **测试模型**: 未测试
 
 ### 4. 静态激活量化 (`activation_scheme="static"`)
 
@@ -29,6 +32,7 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
   - `Fp8LinearMethod` 会注册并加载 `weight_scale` / `input_scale`
   - `apply()` 静态路径使用 checkpoint 预存 `input_scale`，不再动态统计激活 scale
   - 已补充 Qwen2 text runtime，便于使用小型静态 FP8 模型做端到端验证
+- **测试模型**: RedHatAI/Qwen2-0.5B-Instruct-FP8
 
 ### 5. FP8 KV Cache
 
