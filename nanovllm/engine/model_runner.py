@@ -69,11 +69,15 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(get_model_dtype(hf_config))
         torch.set_default_device("cuda")
+
         self.model = build_model_from_config(config)
         load_model(self.model, config.model)
-        if not self.enforce_eager:
-            compile_model_modules(self.model)
         self.sampler = Sampler()
+
+        if not self.enforce_eager:
+            self.sampler.enable_compile()
+            compile_model_modules(self.model)
+
         self.warmup_model()
         self.clear_sequence_states()
         self.allocate_kv_cache()

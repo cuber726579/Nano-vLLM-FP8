@@ -89,6 +89,11 @@ class Sampler(nn.Module):
 这样可以绕开 Inductor 对 `cumsum` scan 的 codegen bug。采样阶段只处理最终 logits，
 相比模型主体计算量较小，去掉 `torch.compile` 的性能影响通常比生成阶段直接崩溃更可控。
 
+如果确实想在 sampler 里保留少量编译优化，只编译纯 tensor、shape 相对稳定、无 Python
+分支的小 helper，例如 temperature scaling 或最终的 sampling helper；不要编译包含
+`sort + cumsum + top_p mask` 的完整 `Sampler.forward`，并给这些 helper 保留 eager
+fallback。
+
 ### 验证方式
 
 修复后重新运行：

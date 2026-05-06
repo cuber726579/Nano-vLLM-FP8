@@ -1,22 +1,40 @@
 import torch
 from torch import nn
 
+from nanovllm.utils.compile import compile_with_eager_fallback
+
 
 class Sampler(nn.Module):
 
     def __init__(self):
         super().__init__()
+        self._compiled = False
 
-    def forward(
+    def enable_compile(self):
+        if self._compiled:
+            return
+        self.scale_logits = compile_with_eager_fallback(self.scale_logits, "Sampler.scale_logits")
+        self.sample_probs = compile_with_eager_fallback(self.sample_probs, "Sampler.sample_probs")
+        self._compiled = True
+
+    def scale_logits(
         self,
         logits: torch.Tensor,
         temperatures: torch.Tensor,
+    ) -> torch.Tensor:
+        return logits.float() / temperatures.unsqueeze(dim=1)
+
+    def sample_probs(self, probs: torch.Tensor) -> torch.Tensor:
+        noise = torch.empty_like(probs).exponential_(1).clamp_min_(1e-10)
+        return (probs / noise).argmax(dim=-1)
+
+    def filter_logits(
+        self,
+        logits: torch.Tensor,
         top_ps: torch.Tensor,
         top_ks: torch.Tensor,
         min_ps: torch.Tensor,
-    ):
-        logits = logits.float().div_(temperatures.unsqueeze(dim=1))
-
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
         vocab_size = sorted_logits.size(-1)
 
@@ -38,7 +56,18 @@ class Sampler(nn.Module):
         probs = torch.softmax(sorted_logits, dim=-1) # 做完 top_p 后 probs 需要更新
         min_p_thresholds = probs[:, :1] * min_ps.unsqueeze(1) # 保留概率 >= max_prob * min_p
         sorted_logits = sorted_logits.masked_fill(probs < min_p_thresholds, -torch.inf)
+        return sorted_logits, sorted_indices
 
+    def forward(
+        self,
+        logits: torch.Tensor,
+        temperatures: torch.Tensor,
+        top_ps: torch.Tensor,
+        top_ks: torch.Tensor,
+        min_ps: torch.Tensor,
+    ):
+        logits = self.scale_logits(logits, temperatures)
+        sorted_logits, sorted_indices = self.filter_logits(logits, top_ps, top_ks, min_ps)
         probs = torch.softmax(sorted_logits, dim=-1)
-        sample_tokens = probs.div_(torch.empty_like(probs).exponential_(1).clamp_min_(1e-10)).argmax(dim=-1)
+        sample_tokens = self.sample_probs(probs)
         return sorted_indices.gather(1, sample_tokens.unsqueeze(1)).squeeze(1)

@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 
+from nanovllm.utils.compile import compile_with_eager_fallback
+
 
 class RMSNorm(nn.Module):
 
@@ -16,8 +18,8 @@ class RMSNorm(nn.Module):
 
     def enable_compile(self):
         if self._compiled: return
-        self.rms_forward = torch.compile(self.rms_forward)
-        self.add_rms_forward = torch.compile(self.add_rms_forward)
+        self.rms_forward = compile_with_eager_fallback(self.rms_forward, "RMSNorm.rms_forward")
+        self.add_rms_forward = compile_with_eager_fallback(self.add_rms_forward, "RMSNorm.add_rms_forward")
         self._compiled = True
 
     def rms_forward(

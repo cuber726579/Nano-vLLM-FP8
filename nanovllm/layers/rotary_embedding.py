@@ -2,6 +2,8 @@ from functools import lru_cache
 import torch
 from torch import nn
 
+from nanovllm.utils.compile import compile_with_eager_fallback
+
 
 def apply_rotary_emb(
     x: torch.Tensor,
@@ -42,7 +44,7 @@ class RotaryEmbedding(nn.Module):
 
     def enable_compile(self):
         if self._compiled: return
-        self.forward = torch.compile(self.forward)
+        self.forward = compile_with_eager_fallback(self.forward, "RotaryEmbedding.forward")
         self._compiled = True
 
     def forward(

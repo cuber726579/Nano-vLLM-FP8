@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from nanovllm.utils.compile import compile_with_eager_fallback
+
 
 class SiluAndMul(nn.Module):
 
@@ -11,7 +13,7 @@ class SiluAndMul(nn.Module):
 
     def enable_compile(self):
         if self._compiled: return
-        self.forward = torch.compile(self.forward)
+        self.forward = compile_with_eager_fallback(self.forward, "SiluAndMul.forward")
         self._compiled = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
