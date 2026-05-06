@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(slots=True)
 class SamplingParams:
     temperature: float = 1.0
     top_p: float = 1.0

@@ -42,7 +42,7 @@ def resolve_runtime_config(hf_config: AutoConfig) -> AutoConfig:
     return hf_config
 
 
-@dataclass
+@dataclass(slots=True)
 class Config:
     model: str
     max_num_batched_tokens: int = 16384
@@ -59,6 +59,7 @@ class Config:
     num_kvcache_blocks: int = -1
     kv_cache_dtype: str | None = None
     enable_prefix_cache: bool = True
+    quant_config: QuantConfig | None = None
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
@@ -78,4 +79,3 @@ class Config:
             self.kv_cache_dtype = KV_CACHE_DTYPE_ALIASES[self.kv_cache_dtype]
             self.enforce_eager = True
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
-        assert self.max_num_batched_tokens >= self.max_model_len
