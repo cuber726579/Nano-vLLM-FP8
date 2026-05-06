@@ -46,6 +46,13 @@ def build_model_from_config(config: Config):
     raise NotImplementedError(f"Unsupported model_type: {hf_config.model_type!r}")
 
 
+def compile_model_modules(model: torch.nn.Module):
+    for module in model.modules():
+        compile_fn = getattr(module, "enable_compile", None)
+        if compile_fn is not None:
+            compile_fn()
+
+
 class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event]):
@@ -64,6 +71,8 @@ class ModelRunner:
         torch.set_default_device("cuda")
         self.model = build_model_from_config(config)
         load_model(self.model, config.model)
+        if not self.enforce_eager:
+            compile_model_modules(self.model)
         self.sampler = Sampler()
         self.warmup_model()
         self.clear_sequence_states()

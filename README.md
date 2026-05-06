@@ -59,6 +59,9 @@ outputs[0]["text"]
 and min-p filtering via `min_p`. Use `top_k=-1` to disable top-k filtering,
 `top_p=1.0` to disable top-p filtering, and `min_p=0.0` to disable min-p filtering.
 
+`enforce_eager=True` disables the runtime acceleration paths managed by Nano-vLLM-FP8,
+including CUDA Graph replay and the model-layer `torch.compile` hooks.
+
 Current limitation: the `Qwen3.5-9B` path is text-only. Vision/video inputs and the multimodal branch of `Qwen3_5ForConditionalGeneration` are not loaded by this runtime.
 
 `bench.py` can be used to benchmark the FP8 inference path.
