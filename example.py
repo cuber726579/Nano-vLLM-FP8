@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 
 def main():
     model_id = "Qwen/Qwen3-4B-Instruct-2507-FP8"
-    path = str(Path(hf_home) / "hub" / "models" / model_id) # modelscope cache path
+    path = str(Path(hf_home) / "models" / model_id) # modelscope cache path
     # path = model_id # huggingface cache path
     tokenizer = AutoTokenizer.from_pretrained(path)
     llm = LLM(
