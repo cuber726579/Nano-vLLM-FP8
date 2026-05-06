@@ -18,6 +18,7 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
   * Currently tested on `Qwen3-0.6B-FP8`, `Qwen3-4B-Thinking-2507-FP8`, and `RedHatAI/Qwen2-0.5B-Instruct-FP8`; other FP8 checkpoints using block-quantized dynamic activations or per-tensor static activations are expected to work
 * **Qwen3.5 Text Support** - Supports the `qwen3_5` text backbone, including hybrid `linear_attention/full_attention` layers
 * **Chunked Prefill Support** - Supports chunked prompt scheduling so long prefills can make progress under batched token budget limits
+* **Additional Sampling Params Support** - Supports `top_p`, `top_k`, `min_p` in `SamplingParams`
 * **RoPE Compatibility** - Adds compatibility for Qwen3 RoPE configs across different transformers versions. See [ROPE.md](./ROPE.md) or upstream [PR #214](https://github.com/GeeeekExplorer/nano-vllm/pull/214) for the compatibility details.
 
 
@@ -42,11 +43,21 @@ See `example.py` for a minimal local `Qwen3.5-9B` inference example. The API mir
 ```python
 from nanovllm import LLM, SamplingParams
 llm = LLM("/YOUR/MODEL/PATH", enforce_eager=True, tensor_parallel_size=1, kv_cache_dtype="fp8")
-sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
+sampling_params = SamplingParams(
+    temperature=0.6,
+    top_p=0.95,
+    top_k=50,
+    min_p=0.0,
+    max_tokens=256,
+)
 prompts = ["Hello, Nano-vLLM."]
 outputs = llm.generate(prompts, sampling_params)
 outputs[0]["text"]
 ```
+
+`SamplingParams` supports nucleus sampling via `top_p`, top-k filtering via `top_k`,
+and min-p filtering via `min_p`. Use `top_k=-1` to disable top-k filtering,
+`top_p=1.0` to disable top-p filtering, and `min_p=0.0` to disable min-p filtering.
 
 Current limitation: the `Qwen3.5-9B` path is text-only. Vision/video inputs and the multimodal branch of `Qwen3_5ForConditionalGeneration` are not loaded by this runtime.
 
@@ -57,7 +68,8 @@ Current limitation: the `Qwen3.5-9B` path is text-only. Vision/video inputs and 
 
 Remaining FP8 features not yet implemented include broader quantization formats and FP8 attention kernels.
 
-See [TODO-FP8.md](./TODO-FP8.md) for the full list including medium/low-priority items and known issues.
+See [TODO-FP8.md](./docs/TODO-FP8.md) for the full list including medium/low-priority items and known issues.
+See [TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) for runtime issues such as `Sampler.forward` hitting PyTorch Inductor codegen errors under `torch.compile`.
 
 ## Benchmark
 
