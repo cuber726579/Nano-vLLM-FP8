@@ -1,27 +1,28 @@
-[build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "nano-vllm"
+name = "nano-vllm-quant"
 version = "0.2.0"
-authors = [{ name = "Xingkai Yu" }]
+authors = [{ name = "Haoyun Pang" }]
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
-description = "a lightweight vLLM implementation built from scratch"
+description = "A lightweight vLLM implementation with quantized inference support based on Nano-vLLM"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "torch>=2.4.0",
-    "triton>=3.0.0",
-    "transformers>=4.51.0",
     "flash-attn",
+    "numpy",
+    "safetensors",
+    "torch>=2.4.0",
+    "transformers>=5.0.0",
+    "triton>=3.0.0",
+    "tqdm",
     "xxhash",
 ]
 
-[project.urls]
-Homepage="https://github.com/GeeeekExplorer/nano-vllm"
+[project.optional-dependencies]
+examples = [
+    "python-dotenv",
+]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["nanovllm*"]
+[project.urls]
+Homepage = "https://github.com/cuber726579/Nano-vLLM-Quant"
+Repository = "https://github.com/cuber726579/Nano-vLLM-Quant"
