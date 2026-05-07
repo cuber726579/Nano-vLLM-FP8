@@ -39,7 +39,7 @@ Nano-vLLM-FP8 FP8 量化推理功能待办清单，按优先级排序。
 - **状态**: 已支持 `kv_cache_dtype="fp8"` / `"fp8_e4m3"` / `"fp8_e5m2"`；`"fp8"` 会归一为 `"fp8_e4m3"`。
 - **已覆盖影响**:
   - KV Cache 可按 FP8 dtype 分配，显存按 1 byte/element 估算 block 数量
-  - Attention 写入 cache 时直接存为 FP8，读取时 gather 回当前计算 dtype 再调用 FlashAttention
+  - Attention 写入 cache 时直接存为 FP8，读取时 gather 回当前计算 dtype 再调用 FlashAttention，只做类型转换
   - 当前 FP8 KV cache 路径会强制 eager，避免动态 gather 形状与 CUDA graph 捕获冲突
 - **待补测试**:
   - 覆盖 `kv_cache_dtype="fp8"` / `"fp8_e4m3"` / `"fp8_e5m2"` 的配置归一化、cache dtype 分配、prefill/decode 路径和基础生成结果
