@@ -169,12 +169,9 @@ class ModelRunner:
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
         assert config.num_kvcache_blocks > 0
         self.kv_cache = torch.empty(
-            2,
-            hf_config.num_hidden_layers,
-            config.num_kvcache_blocks,
-            self.block_size,
-            num_kv_heads,
-            head_dim,
+            2, hf_config.num_hidden_layers,
+            config.num_kvcache_blocks, self.block_size,
+            num_kv_heads, head_dim,
             dtype=kv_cache_dtype,
         )
         layer_id = 0
