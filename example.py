@@ -1,26 +1,23 @@
 import os
 from dotenv import load_dotenv
 load_dotenv()
-hf_home = os.getenv("MODELSCOPE_CACHE")
 
 from pathlib import Path
 from nanovllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 
 def main():
-    model_id = "Qwen/Qwen3-4B-Instruct-2507-FP8"
-    path = str(Path(hf_home) / "models" / model_id) # modelscope cache path
-    # path = model_id # huggingface cache path
+    model_id = "Qwen/Qwen3-0.6B-FP8"
+    cache = os.getenv("MODELSCOPE_CACHE")
+    path = str(Path(cache) / "models" / model_id)
     tokenizer = AutoTokenizer.from_pretrained(path)
-    llm = LLM(
-        path,
-        max_model_len=512,
-        max_num_batched_tokens=512,
-        gpu_memory_utilization=0.5,
-        kv_cache_dtype="fp8"
+    llm = LLM(path, kv_cache_dtype="fp8")
+
+    sampling_params = SamplingParams(
+        temperature=0.6, max_tokens=256,
+        top_k=30, top_p=0.9, min_p=0.05
     )
 
-    sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
     prompts = [
         "introduce yourself",
         "list all prime numbers within 100",
