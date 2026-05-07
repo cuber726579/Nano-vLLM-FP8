@@ -31,20 +31,17 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
 ## Installation
 
 ```bash
-pip install git+https://github.com/cuber726579/Nano-vLLM-FP8.git
+pip install git+https://github.com/cuber726579/Nano-vLLM-Quant.git
 ```
 
 ## Model Download
 
 To download the model weights manually, use the following command:
 ```bash
-huggingface-cli download --resume-download Qwen/Qwen3-0.6B-FP8 \
-  --local-dir ~/huggingface/Qwen3-0.6B-FP8/ \
-  --local-dir-use-symlinks False
+modelscope download  Qwen/Qwen3-0.6B-FP8
 ```
 
 ## Quick Start
-
 
 ```python
 from nanovllm import LLM, SamplingParams
@@ -60,16 +57,6 @@ prompts = ["Hello, Nano-vLLM."]
 outputs = llm.generate(prompts, sampling_params)
 outputs[0]["text"]
 ```
-
-`SamplingParams` supports nucleus sampling via `top_p`, top-k filtering via `top_k`,
-and min-p filtering via `min_p`. Use `top_k=-1` to disable top-k filtering,
-`top_p=1.0` to disable top-p filtering, and `min_p=0.0` to disable min-p filtering.
-
-`enforce_eager=True` disables the runtime acceleration paths managed by Nano-vLLM-FP8,
-including CUDA Graph replay, model-layer `torch.compile` hooks, and optional sampler
-helper compile hooks.
-
-`bench.py` can be used to benchmark the FP8 inference path.
 
 
 ## TODO
