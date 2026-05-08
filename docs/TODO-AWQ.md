@@ -18,12 +18,19 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
   - AWQ `version="gemv"`、ExLlama、Marlin 等其它执行后端
   - AWQ MoE 专用优化
 
-## 当前基础
+## 已完成
 
-- `QuantConfig.from_hf_config()` 已能读取 HF `quantization_config`，并支持 `quant_method="fp8"` / `quant_method="awq"`。
-- `LinearBase` 已支持通过 `quant_config.get_quant_method()` 为不同 Linear 层选择量化或非量化方法，AWQ 已接入这条分发路径。
-- `modules_to_not_convert`、`ignored_layers`、`excluded_modules` 已统一成 `excluded_modules`，AWQ 已复用这套排除逻辑。
-- `load_model()` 已支持 packed linear 的 shard loader，AWQ 已为 `qweight` / `qzeros` / `scales` 提供专用加载逻辑。
+- `QuantConfig.from_hf_config()` 已支持 `quant_method="awq"`，并解析 `bits` / `w_bit`、`group_size` / `q_group_size`、`zero_point`、`version` 和 `extra` 字段。
+- AWQ 配置已复用 `modules_to_not_convert`、`ignored_layers`、`excluded_modules` 到统一的 `excluded_modules` 排除逻辑。
+- `AwqLinearMethod` 已接入 `QuantConfig.get_quant_method()` 和 `build_linear_method()`，被排除层继续走 `UnquantizedLinearMethod`。
+- `nanovllm/quantization/awq.py` 已提供 AWQ int4 pack/unpack、GEMM/GEMV dequant fallback 和 `dequantize + F.linear` 参考执行路径。
+- `AwqLinearMethod.create_weights()` 已注册 `qweight`、`qzeros`、`scales` 和可选 `bias` 参数，并标记量化权重为 `requires_grad=False`。
+- AWQ loader 已为 `qweight` / `qzeros` / `scales` 提供基础加载逻辑，并覆盖 replicated / column / row / merged / qkv 的基础切分规则。
+- 已支持 `version="gemv"` 的参数形状、loader 切片和 PyTorch dequant fallback。
+- 已兼容常见 AutoAWQ/HF 字段别名与提示字段，包括 `w_bit`、`q_group_size`、`backend`、`do_fuse`、`modules_to_fuse`、`exllama_config`。
+- 已兼容 `modules_to_fuse` 配置字段，但不执行 fused module 替换。
+- 已新增 Llama / Mistral dense decoder 入口，可复用 Llama-like 的 Qwen2 block 实现和 AWQ 线性层。
+- 已添加 GEMM / GEMV synthetic dequant 测试，以及 Qwen3 packed QKV loader 覆盖。
 
 ---
 
@@ -31,32 +38,11 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 1. 扩展 `QuantConfig` 支持 AWQ 字段
 
-- **状态**: 已实现。
-- **现状**: AWQ checkpoint 已能通过配置解析，支持 `bits` / `w_bit`、`group_size` / `q_group_size`、`zero_point`、`version` 和额外字段保留。
-- **改动点**:
-  - 在 `QuantConfig` 中新增字段:
-    - `bits: int | None`
-    - `group_size: int | None`
-    - `zero_point: bool | None`
-    - `version: str | None`
-    - `extra: dict[str, Any]`
-  - `from_hf_config()` 接受 `quant_method="awq"`。
-  - 对当前支持范围做显式校验:
-    - `bits == 4`
-    - `group_size > 0`
-    - `zero_point is True`
-    - `version in ("gemm", "gemv", None)`
-  - 对 `backend`、`do_fuse`、`modules_to_fuse`、`exllama_config` 等运行时提示字段暂存到 `extra`，不影响执行。
+- **状态**: 已完成，见“已完成”。
 
 ### 2. 新增 AWQ 线性方法入口
 
-- **状态**: 已实现。
-- **现状**: `get_quant_method()` 和 `build_linear_method()` 已能实例化 `AwqLinearMethod`。
-- **改动点**:
-  - 新增 `nanovllm/quantization/awq.py`
-  - 实现 `AwqLinearMethod(LinearMethod)`
-  - 在 `QuantConfig.get_quant_method()` 和 `build_linear_method()` 中注册 `awq`
-  - 保持 `excluded_modules` 行为与 FP8 一致，被排除层继续走 `UnquantizedLinearMethod`
+- **状态**: 已完成，见“已完成”。
 
 ### 3. 注册 AWQ checkpoint 权重参数
 
@@ -76,16 +62,7 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 4. 先实现可验证的 dequant fallback
 
-- **状态**: 已实现。
-- **目的**: 先保证权重加载和数值路径正确，再优化性能。
-- **改动点**:
-  - 实现 `dequantize_awq(qweight, qzeros, scales, bits, group_size, zero_point)`。
-  - `AwqLinearMethod.apply()` 先走 `dequantize + F.linear` 参考路径。
-  - CPU / CUDA 都可运行，便于小形状单测和真实模型冒烟测试。
-- **验收标准**:
-  - synthetic AWQ 权重反量化结果与参考实现误差在可接受范围内。
-  - Qwen3 AWQ checkpoint 可以完整加载，不出现缺参或 shape mismatch。
-  - **已覆盖**: 已添加 GEMM / GEMV synthetic dequant 测试，以及 Qwen3-4B-AWQ 配置、QKV loader、生成冒烟测试。
+- **状态**: 已完成，见“已完成”。
 
 ### 5. 增加 CUDA/Triton AWQ GEMM 路径
 
@@ -164,18 +141,13 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 11. 更多 AWQ 生态兼容
 
-- 兼容 `version="gemv"`。
-  - **状态**: 已支持 `version="gemv"` 的参数形状、loader 切片和 PyTorch dequant fallback；GEMV TP row-parallel 的 qzeros/scales 分片要求 group shard 与 pack factor 对齐，否则给出明确错误。
 - 研究 AutoAWQ、llm-awq、vLLM、Transformers 不同 checkpoint 的字段和权重布局差异。
-  - **状态**: 已覆盖常见 AutoAWQ/HF 字段别名 `w_bit` / `q_group_size`，并把 `backend`、`do_fuse`、`modules_to_fuse`、`exllama_config` 等运行时提示保存在 `QuantConfig.extra`。
-- 视需要支持 `modules_to_fuse`，但不在首批路径做 fused module 替换。
-  - **状态**: 已兼容配置字段并安全忽略 fused module 替换。
+- 评估是否需要真正执行 `modules_to_fuse` 对应的 fused module 替换。
 
 ### 12. 非 Qwen 模型架构
 
 - 当前项目主要模型实现集中在 Qwen2 / Qwen3 / Qwen3.5。
-- AWQ 线性层可复用，但 Llama、Mistral、DeepSeek 等模型仍需要对应 `models/*.py` 和 `model_runner` 分发。
-  - **状态**: 已新增 Llama / Mistral dense decoder 入口，复用 Llama-like 的 Qwen2 block 实现和 AWQ 线性层；DeepSeek 专用 MLA/MoE 架构仍未接入。
+- AWQ 线性层可复用，DeepSeek 等专用 MLA/MoE 架构仍需要对应 `models/*.py` 和 `model_runner` 分发。
 
 ---
 
@@ -203,7 +175,7 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
   - 权重加载
   - 单 prompt prefill + decode
   - batch prompts
-  - **状态**: 已覆盖配置解析、QKV loader 和单 prompt 生成冒烟；batch prompts 待补充。
+  - **状态**: 已覆盖配置解析、QKV loader 和单 prompt 生成冒烟；但当前生成结果可能退化为重复符号，例如 `Completion: '!!!!!!!!'`，说明数值路径仍需和参考实现对齐；batch prompts 待补充。
 - 使用 `Qwen/Qwen3-8B-AWQ`:
   - 覆盖 `backend="autoawq"`、`do_fuse=false` 等额外字段被安全忽略。
   - **状态**: 配置额外字段已通过 synthetic config 覆盖；真实 8B checkpoint 待补充。
@@ -212,5 +184,6 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 - AWQ packed 权重布局必须以真实 safetensors 为准，不能只按配置字段推断。
 - TP 分片和 packed int4 的 pack factor 对齐最容易引入静默数值错误。
+- 当前 `Qwen/Qwen3-4B-AWQ` 端到端生成可以跑完，但曾出现输出全是重复感叹号的退化结果；这通常意味着某处权重反量化、zero point、scale 维度、QKV 拼接或 dtype 路径仍有数值偏差，不能只用“非空输出”作为通过标准。
 - Triton kernel 的数值路径要同时覆盖 FP16 和 BF16 输入。
 - 首批 Qwen3 AWQ 是 dense 模型，后续 MoE AWQ 可能需要额外处理 expert 权重和 router 排除策略。
