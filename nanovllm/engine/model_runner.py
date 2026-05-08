@@ -33,16 +33,24 @@ def build_model_from_config(config: Config):
     hf_config = config.hf_config
     if hf_config.model_type == "qwen2":
         from nanovllm.models.qwen2 import Qwen2ForCausalLM
-
         return Qwen2ForCausalLM(hf_config, quant_config=config.quant_config)
+
     if hf_config.model_type == "qwen3":
         from nanovllm.models.qwen3 import Qwen3ForCausalLM
-
         return Qwen3ForCausalLM(hf_config, quant_config=config.quant_config)
+
     if hf_config.model_type == "qwen3_5_text":
         from nanovllm.models.qwen3_5 import Qwen3_5ForCausalLM
-
         return Qwen3_5ForCausalLM(hf_config, quant_config=config.quant_config)
+
+    if hf_config.model_type == "llama":
+        from nanovllm.models.llama import LlamaForCausalLM
+        return LlamaForCausalLM(hf_config, quant_config=config.quant_config)
+
+    if hf_config.model_type == "mistral":
+        from nanovllm.models.mistral import MistralForCausalLM
+        return MistralForCausalLM(hf_config, quant_config=config.quant_config)
+
     raise NotImplementedError(f"Unsupported model_type: {hf_config.model_type!r}")
 
 

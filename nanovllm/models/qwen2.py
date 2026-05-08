@@ -12,6 +12,10 @@ from nanovllm.layers.rotary_embedding import get_rope
 from nanovllm.quantization.base import QuantConfig
 
 
+def default_attention_bias(config: Qwen2Config) -> bool:
+    return getattr(config, "attention_bias", getattr(config, "model_type", None) == "qwen2")
+
+
 class Qwen2Attention(nn.Module):
 
     def __init__(
@@ -30,7 +34,7 @@ class Qwen2Attention(nn.Module):
         self.num_kv_heads = self.total_num_kv_heads // tp_size
         self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         self.scaling = self.head_dim ** -0.5
-        qkv_bias = getattr(config, "attention_bias", True)
+        qkv_bias = default_attention_bias(config)
 
         self.q_proj = ColumnParallelLinear(
             config.hidden_size,
