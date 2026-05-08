@@ -11,7 +11,7 @@ logs/
 ckpt/
 
 # Local symlinks
-/Huggingface
+Huggingface
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

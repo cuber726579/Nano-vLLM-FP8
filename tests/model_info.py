@@ -114,8 +114,8 @@ def print_weights(model_path: str, layer_pattern: str | None, max_weights: int |
         raise ImportError("safetensors is required to inspect weight name/shape/dtype.")
 
     print("=== Weight Tensors ===")
-    print(f"{'layer':>5}  {'dtype':<12}  {'shape':<28}  name")
-    print(f"{'-' * 5}  {'-' * 12}  {'-' * 28}  {'-' * 40}")
+    print(f"{'layer':>5}  {'dtype':<12}  {'shape':<16}  name")
+    print(f"{'-' * 5}  {'-' * 12}  {'-' * 16}  {'-' * 40}")
 
     count = 0
     current_file = None
@@ -124,7 +124,7 @@ def print_weights(model_path: str, layer_pattern: str | None, max_weights: int |
             current_file = info["file"]
             print(f"\n# {current_file}")
         shape = "x".join(str(dim) for dim in info["shape"])
-        print(f"{info['layer']:>5}  {info['dtype']:<12}  {shape:<28}  {info['name']}")
+        print(f"{info['layer']:>5}  {info['dtype']:<12}  {shape:<16}  {info['name']}")
         count += 1
         if max_weights is not None and count >= max_weights:
             print(f"\n... stopped after --max-weights={max_weights}")
