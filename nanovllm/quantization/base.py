@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 import torch.nn.functional as F
@@ -16,11 +16,26 @@ def ceil_div(numerator: int, denominator: int) -> int:
 
 @dataclass(frozen=True)
 class QuantConfig:
+    _EXCLUDED_MODULE_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"modules_to_not_convert", "ignored_layers", "excluded_modules"}
+    )
+    _AWQ_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"quant_method", "bits", "w_bit", "group_size", "q_group_size", "zero_point", "version"}
+    )
+    _FP8_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"quant_method", "activation_scheme", "fmt", "weight_block_size"}
+    )
+
     quant_method: str
-    activation_scheme: str
-    fmt: str
+    activation_scheme: str | None = None
+    fmt: str | None = None
     weight_block_size: tuple[int, int] | None = None
     excluded_modules: frozenset[str] = field(default_factory=frozenset)
+    bits: int | None = None
+    group_size: int | None = None
+    zero_point: bool | None = None
+    version: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_hf_config(
@@ -41,40 +56,102 @@ class QuantConfig:
             raw_config = raw_config.to_dict()
         elif not isinstance(raw_config, dict):
             raw_config = dict(raw_config)
+        raw_config = dict(raw_config)
 
         quant_method = raw_config.get("quant_method")
-        if quantization is not None and quantization != quant_method:
+        if isinstance(quant_method, str):
+            quant_method = quant_method.lower()
+        requested_quantization = quantization.lower() if isinstance(quantization, str) else quantization
+        if requested_quantization is not None and requested_quantization != quant_method:
             raise ValueError(
                 f"Requested quantization={quantization!r} does not match "
                 f"checkpoint quant_method={quant_method!r}."
             )
-        if quant_method != "fp8":
-            raise NotImplementedError(f"Unsupported quantization method: {quant_method!r}")
 
+        excluded_modules = cls._parse_excluded_modules(raw_config)
+
+        if quant_method == "awq":
+            return cls._from_awq_config(raw_config, quant_method, excluded_modules)
+
+        if quant_method == "fp8":
+            return cls._from_fp8_config(raw_config, quant_method, excluded_modules)
+
+        raise NotImplementedError(f"Unsupported quantization method: {quant_method!r}")
+
+    @classmethod
+    def _from_awq_config(
+        cls,
+        raw_config: dict[str, Any],
+        quant_method: str,
+        excluded_modules: frozenset[str],
+    ) -> "QuantConfig":
+        bits = cls._read_int_field(raw_config, "bits", "w_bit")
+        group_size = cls._read_int_field(raw_config, "group_size", "q_group_size")
+        zero_point = raw_config.get("zero_point")
+        version = raw_config.get("version", "gemm")
+        if isinstance(version, str):
+            version = version.lower()
+        elif version is None:
+            version = "gemm"
+
+        if bits != 4:
+            raise NotImplementedError(f"Unsupported AWQ bits: {bits!r}. Only 4-bit AWQ is supported.")
+        if group_size is None or group_size <= 0:
+            raise ValueError(f"Invalid AWQ group_size: {group_size!r}")
+        if zero_point is not True:
+            raise NotImplementedError("Only zero-point AWQ checkpoints are supported.")
+        if version not in ("gemm", "gemv"):
+            raise NotImplementedError(f"Unsupported AWQ version: {version!r}. Choose 'gemm' or 'gemv'.")
+
+        return cls(
+            quant_method=quant_method,
+            excluded_modules=excluded_modules,
+            bits=bits,
+            group_size=group_size,
+            zero_point=zero_point,
+            version=version,
+            extra=cls._extra_fields(raw_config, cls._AWQ_FIELDS),
+        )
+
+    @classmethod
+    def _from_fp8_config(
+        cls,
+        raw_config: dict[str, Any],
+        quant_method: str,
+        excluded_modules: frozenset[str],
+    ) -> "QuantConfig":
         activation_scheme = raw_config.get("activation_scheme", "dynamic")
         if activation_scheme not in ("dynamic", "static"):
             raise NotImplementedError(f"Unsupported FP8 activation scheme: {activation_scheme!r}")
-        fmt = raw_config.get("fmt", "e4m3")
-        weight_block_size = raw_config.get("weight_block_size")
-        if weight_block_size is not None:
-            if len(weight_block_size) != 2:
-                raise ValueError(f"Invalid weight_block_size: {weight_block_size!r}")
-            weight_block_size = tuple(int(x) for x in weight_block_size)
 
-        excluded_modules = cls._parse_excluded_modules(raw_config)
+        weight_block_size = cls._parse_weight_block_size(raw_config.get("weight_block_size"))
 
         return cls(
             quant_method=quant_method,
             activation_scheme=activation_scheme,
-            fmt=fmt,
+            fmt=raw_config.get("fmt", "e4m3"),
             weight_block_size=weight_block_size,
             excluded_modules=excluded_modules,
+            extra=cls._extra_fields(raw_config, cls._FP8_FIELDS),
         )
 
     @staticmethod
-    def _parse_excluded_modules(raw_config: dict[str, Any]) -> frozenset[str]:
+    def _parse_weight_block_size(weight_block_size: Any) -> tuple[int, int] | None:
+        if weight_block_size is None:
+            return None
+        if len(weight_block_size) != 2:
+            raise ValueError(f"Invalid weight_block_size: {weight_block_size!r}")
+        return (int(weight_block_size[0]), int(weight_block_size[1]))
+
+    @classmethod
+    def _extra_fields(cls, raw_config: dict[str, Any], known_fields: frozenset[str]) -> dict[str, Any]:
+        known_fields = known_fields | cls._EXCLUDED_MODULE_FIELDS
+        return {key: value for key, value in raw_config.items() if key not in known_fields}
+
+    @classmethod
+    def _parse_excluded_modules(cls, raw_config: dict[str, Any]) -> frozenset[str]:
         excluded_modules: set[str] = set()
-        for field_name in ("modules_to_not_convert", "ignored_layers", "excluded_modules"):
+        for field_name in cls._EXCLUDED_MODULE_FIELDS:
             value = raw_config.get(field_name)
             if value is None:
                 continue
@@ -86,6 +163,14 @@ class QuantConfig:
                 if module:
                     excluded_modules.add(str(module))
         return frozenset(excluded_modules)
+
+    @staticmethod
+    def _read_int_field(raw_config: dict[str, Any], *field_names: str) -> int | None:
+        for field_name in field_names:
+            value = raw_config.get(field_name)
+            if value is not None:
+                return int(value)
+        return None
 
     def is_module_excluded(self, module_name: str | None) -> bool:
         if not module_name:
@@ -120,8 +205,12 @@ class QuantConfig:
 
         if self.quant_method == "fp8":
             from nanovllm.quantization.fp8 import Fp8LinearMethod
-
             return Fp8LinearMethod(self)
+
+        if self.quant_method == "awq":
+            from nanovllm.quantization.awq import AwqLinearMethod
+            return AwqLinearMethod(self)
+
         raise NotImplementedError(f"Unsupported quantization method: {self.quant_method!r}")
 
 
@@ -186,6 +275,10 @@ def build_linear_method(quant_config: QuantConfig | None) -> LinearMethod:
         return UnquantizedLinearMethod()
     if quant_config.quant_method == "fp8":
         from nanovllm.quantization.fp8 import Fp8LinearMethod
-
         return Fp8LinearMethod(quant_config)
+
+    if quant_config.quant_method == "awq":
+        from nanovllm.quantization.awq import AwqLinearMethod
+        return AwqLinearMethod(quant_config)
+
     raise NotImplementedError(f"Unsupported quantization method: {quant_config.quant_method!r}")
