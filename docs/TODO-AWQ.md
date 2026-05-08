@@ -20,10 +20,10 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ## 当前基础
 
-- `QuantConfig.from_hf_config()` 已能读取 HF `quantization_config`，但当前只接受 `quant_method="fp8"`。
-- `LinearBase` 已支持通过 `quant_config.get_quant_method()` 为不同 Linear 层选择量化或非量化方法。
-- `modules_to_not_convert`、`ignored_layers`、`excluded_modules` 已统一成 `excluded_modules`，AWQ 可以复用这套排除逻辑。
-- `load_model()` 已支持 packed linear 的 shard loader，但目前 loader 主要围绕 FP8 scale 命名和普通权重布局。
+- `QuantConfig.from_hf_config()` 已能读取 HF `quantization_config`，并支持 `quant_method="fp8"` / `quant_method="awq"`。
+- `LinearBase` 已支持通过 `quant_config.get_quant_method()` 为不同 Linear 层选择量化或非量化方法，AWQ 已接入这条分发路径。
+- `modules_to_not_convert`、`ignored_layers`、`excluded_modules` 已统一成 `excluded_modules`，AWQ 已复用这套排除逻辑。
+- `load_model()` 已支持 packed linear 的 shard loader，AWQ 已为 `qweight` / `qzeros` / `scales` 提供专用加载逻辑。
 
 ---
 
@@ -31,7 +31,8 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 1. 扩展 `QuantConfig` 支持 AWQ 字段
 
-- **现状**: AWQ checkpoint 会直接触发 `Unsupported quantization method: 'awq'`。
+- **状态**: 已实现。
+- **现状**: AWQ checkpoint 已能通过配置解析，支持 `bits` / `w_bit`、`group_size` / `q_group_size`、`zero_point`、`version` 和额外字段保留。
 - **改动点**:
   - 在 `QuantConfig` 中新增字段:
     - `bits: int | None`
@@ -40,16 +41,17 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
     - `version: str | None`
     - `extra: dict[str, Any]`
   - `from_hf_config()` 接受 `quant_method="awq"`。
-  - 对首批范围做显式校验:
+  - 对当前支持范围做显式校验:
     - `bits == 4`
-    - `group_size == 128`
+    - `group_size > 0`
     - `zero_point is True`
-    - `version in ("gemm", None)`
+    - `version in ("gemm", "gemv", None)`
   - 对 `backend`、`do_fuse`、`modules_to_fuse`、`exllama_config` 等运行时提示字段暂存到 `extra`，不影响执行。
 
 ### 2. 新增 AWQ 线性方法入口
 
-- **现状**: `get_quant_method()` 和 `build_linear_method()` 只会实例化 `Fp8LinearMethod`。
+- **状态**: 已实现。
+- **现状**: `get_quant_method()` 和 `build_linear_method()` 已能实例化 `AwqLinearMethod`。
 - **改动点**:
   - 新增 `nanovllm/quantization/awq.py`
   - 实现 `AwqLinearMethod(LinearMethod)`
@@ -58,7 +60,8 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 3. 注册 AWQ checkpoint 权重参数
 
-- **现状**: 现有 `LinearMethod.create_weights()` 默认只注册 `weight` 或 FP8 `weight_scale` / `weight_scale_inv`。
+- **状态**: 已实现基础路径。
+- **现状**: `AwqLinearMethod.create_weights()` 已注册 AWQ packed 权重参数，并为常见 linear / packed linear 提供 loader。
 - **AWQ 常见参数**:
   - `qweight`
   - `qzeros`
@@ -69,9 +72,11 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
   - 明确每个参数的形状、dtype 和 `requires_grad=False`。
   - 为 `ColumnParallelLinear`、`MergedColumnParallelLinear`、`QKVParallelLinear` 补齐 AWQ scale / zero / qweight 的 shard loader。
   - 对 packed QKV 和 gate/up 投影确认 HF checkpoint 命名能正确映射到本项目 `packed_modules_mapping`。
+  - **已覆盖**: Qwen3 packed QKV 的 `qweight` / `qzeros` / `scales` loader 已有真实 checkpoint 测试。
 
 ### 4. 先实现可验证的 dequant fallback
 
+- **状态**: 已实现。
 - **目的**: 先保证权重加载和数值路径正确，再优化性能。
 - **改动点**:
   - 实现 `dequantize_awq(qweight, qzeros, scales, bits, group_size, zero_point)`。
@@ -80,6 +85,7 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 - **验收标准**:
   - synthetic AWQ 权重反量化结果与参考实现误差在可接受范围内。
   - Qwen3 AWQ checkpoint 可以完整加载，不出现缺参或 shape mismatch。
+  - **已覆盖**: 已添加 GEMM / GEMV synthetic dequant 测试，以及 Qwen3-4B-AWQ 配置、QKV loader、生成冒烟测试。
 
 ### 5. 增加 CUDA/Triton AWQ GEMM 路径
 
@@ -95,6 +101,7 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 6. 处理 Tensor Parallel 分片
 
+- **状态**: 部分实现。
 - **风险点**:
   - AWQ packed 权重通常沿输出维打包，TP 分片必须与 pack factor 对齐。
   - `qzeros` 和 `scales` 的分片维度不一定与 `qweight` 完全相同。
@@ -102,9 +109,12 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
   - 明确 `qweight`、`qzeros`、`scales` 在 replicated / column / row / merged / qkv linear 中的 shard 规则。
   - 对无法整除的分片给出带层名和形状的清晰错误。
   - 覆盖 TP=1 的基础路径，再扩展 TP>1。
+  - **已覆盖**: AWQ loader 已实现 replicated / column / row / merged / qkv 的基础切分规则，并对 pack factor、group shard 对齐和 shape mismatch 给出错误。
+  - **待补充**: TP>1 的真实模型端到端验证和更多 packed merged projection 场景。
 
 ### 7. 真实模型端到端验证
 
+- **状态**: 部分实现。
 - **建议模型**:
   - `Qwen/Qwen3-4B-AWQ` 作为首个真实 checkpoint
   - `Qwen/Qwen3-8B-AWQ` 用于覆盖额外配置字段
@@ -113,6 +123,8 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
   - safetensors 权重全部加载，无未知参数、缺失参数或 shape mismatch。
   - prompt 生成可以稳定输出非空文本。
   - 与 FP16/BF16 或 Transformers/AutoAWQ 参考输出做短 prompt 粗略对齐。
+  - **已覆盖**: 已添加 `Qwen/Qwen3-4B-AWQ` 的配置解析、QKV 权重加载和 CUDA 生成冒烟测试。
+  - **待补充**: `Qwen/Qwen3-8B-AWQ`、batch prompts、以及与 Transformers/AutoAWQ 输出粗略对齐。
 
 ---
 
@@ -120,12 +132,15 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 
 ### 8. 更好的错误信息
 
+- **状态**: 部分实现。
 - 在 `AwqLinearMethod.create_weights()` 和 loader 中加入层名、参数名、期望 shape、实际 shape。
 - 对不支持的 AWQ 变体给出明确报错，例如:
   - `bits != 4`
   - `zero_point is False`
   - `version != "gemm"`
   - `group_size` 不是 kernel 支持值
+  - **已覆盖**: AWQ 参数加载、packed shard、TP 维度、shape mismatch、pack factor 和不支持变体已有明确报错。
+  - **待补充**: Triton kernel 接入后补充 kernel 条件和 fallback 原因。
 
 ### 9. 性能基准
 
@@ -150,13 +165,17 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 ### 11. 更多 AWQ 生态兼容
 
 - 兼容 `version="gemv"`。
+  - **状态**: 已支持 `version="gemv"` 的参数形状、loader 切片和 PyTorch dequant fallback；GEMV TP row-parallel 的 qzeros/scales 分片要求 group shard 与 pack factor 对齐，否则给出明确错误。
 - 研究 AutoAWQ、llm-awq、vLLM、Transformers 不同 checkpoint 的字段和权重布局差异。
+  - **状态**: 已覆盖常见 AutoAWQ/HF 字段别名 `w_bit` / `q_group_size`，并把 `backend`、`do_fuse`、`modules_to_fuse`、`exllama_config` 等运行时提示保存在 `QuantConfig.extra`。
 - 视需要支持 `modules_to_fuse`，但不在首批路径做 fused module 替换。
+  - **状态**: 已兼容配置字段并安全忽略 fused module 替换。
 
 ### 12. 非 Qwen 模型架构
 
 - 当前项目主要模型实现集中在 Qwen2 / Qwen3 / Qwen3.5。
 - AWQ 线性层可复用，但 Llama、Mistral、DeepSeek 等模型仍需要对应 `models/*.py` 和 `model_runner` 分发。
+  - **状态**: 已新增 Llama / Mistral dense decoder 入口，复用 Llama-like 的 Qwen2 block 实现和 AWQ 线性层；DeepSeek 专用 MLA/MoE 架构仍未接入。
 
 ---
 
@@ -171,9 +190,11 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
 - `dequantize_awq()`:
   - 覆盖固定小矩阵、不同 group 边界、带 zero point 的反量化。
   - 与纯 PyTorch unpack 参考实现对齐。
+  - **状态**: 已覆盖 GEMM / GEMV 小矩阵反量化。
 - `AwqLinearMethod.apply()`:
   - reference 路径与浮点线性层输出对齐。
   - packed QKV / gate_up 分片 scale loader 正确。
+  - **状态**: 已覆盖 Qwen3 packed QKV loader；`apply()` 与浮点线性层对齐、gate/up 分片仍待补充。
 
 ### 集成测试
 
@@ -182,8 +203,10 @@ Nano-vLLM-FP8 AWQ 量化推理功能待办清单，按落地顺序排序。
   - 权重加载
   - 单 prompt prefill + decode
   - batch prompts
+  - **状态**: 已覆盖配置解析、QKV loader 和单 prompt 生成冒烟；batch prompts 待补充。
 - 使用 `Qwen/Qwen3-8B-AWQ`:
   - 覆盖 `backend="autoawq"`、`do_fuse=false` 等额外字段被安全忽略。
+  - **状态**: 配置额外字段已通过 synthetic config 覆盖；真实 8B checkpoint 待补充。
 
 ## 已知风险
 
