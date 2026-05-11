@@ -7,58 +7,11 @@ from multiprocessing.shared_memory import SharedMemory
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence
 from nanovllm.layers.sampler import Sampler
+from nanovllm.models.registry import build_model_from_config
 from nanovllm.utils.context import set_context, get_context, reset_context
+from nanovllm.utils.dtypes import get_dtype_size, get_kv_cache_dtype, get_model_dtype
 from nanovllm.utils.loader import load_model
-
-
-def get_model_dtype(hf_config):
-    return getattr(hf_config, "dtype", None) or getattr(hf_config, "torch_dtype", None)
-
-
-def get_kv_cache_dtype(config: Config):
-    if config.kv_cache_dtype is None:
-        return get_model_dtype(config.hf_config)
-    if config.kv_cache_dtype == "fp8_e4m3":
-        return torch.float8_e4m3fn
-    if config.kv_cache_dtype == "fp8_e5m2":
-        return torch.float8_e5m2
-    raise ValueError(f"Unsupported kv_cache_dtype: {config.kv_cache_dtype!r}")
-
-
-def get_dtype_size(dtype: torch.dtype) -> int:
-    return torch.empty((), dtype=dtype).element_size()
-
-
-def build_model_from_config(config: Config):
-    hf_config = config.hf_config
-    if hf_config.model_type == "qwen2":
-        from nanovllm.models.qwen2 import Qwen2ForCausalLM
-        return Qwen2ForCausalLM(hf_config, quant_config=config.quant_config)
-
-    if hf_config.model_type == "qwen3":
-        from nanovllm.models.qwen3 import Qwen3ForCausalLM
-        return Qwen3ForCausalLM(hf_config, quant_config=config.quant_config)
-
-    if hf_config.model_type == "qwen3_5_text":
-        from nanovllm.models.qwen3_5 import Qwen3_5ForCausalLM
-        return Qwen3_5ForCausalLM(hf_config, quant_config=config.quant_config)
-
-    if hf_config.model_type == "llama":
-        from nanovllm.models.llama import LlamaForCausalLM
-        return LlamaForCausalLM(hf_config, quant_config=config.quant_config)
-
-    if hf_config.model_type == "mistral":
-        from nanovllm.models.mistral import MistralForCausalLM
-        return MistralForCausalLM(hf_config, quant_config=config.quant_config)
-
-    raise NotImplementedError(f"Unsupported model_type: {hf_config.model_type!r}")
-
-
-def compile_model_modules(model: torch.nn.Module):
-    for module in model.modules():
-        compile_fn = getattr(module, "enable_compile", None)
-        if compile_fn is not None:
-            compile_fn()
+from nanovllm.utils.compile import compile_model_modules
 
 
 class ModelRunner:
