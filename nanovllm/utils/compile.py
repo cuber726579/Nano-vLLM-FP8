@@ -21,3 +21,9 @@ def compile_with_eager_fallback(fn, name: str):
             return fn(*args, **kwargs)
 
     return wrapped
+
+def compile_model_modules(model: torch.nn.Module):
+    for module in model.modules():
+        compile_fn = getattr(module, "enable_compile", None)
+        if compile_fn is not None:
+            compile_fn()
