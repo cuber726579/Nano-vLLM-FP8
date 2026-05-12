@@ -230,11 +230,12 @@ class ModelRunner:
         top_ps = [seq.top_p for seq in seqs]
         top_ks = [seq.top_k for seq in seqs]
         min_ps = [seq.min_p for seq in seqs]
+        needs_filter = any(top_p < 1.0 or top_k > 0 or min_p > 0.0 for top_p, top_k, min_p in zip(top_ps, top_ks, min_ps))
         temperatures = torch.tensor(temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
         top_ps = torch.tensor(top_ps, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
         top_ks = torch.tensor(top_ks, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         min_ps = torch.tensor(min_ps, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
-        return temperatures, top_ps, top_ks, min_ps
+        return temperatures, top_ps, top_ks, min_ps, needs_filter
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):

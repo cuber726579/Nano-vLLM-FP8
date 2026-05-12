@@ -65,9 +65,14 @@ class Sampler(nn.Module):
         top_ps: torch.Tensor,
         top_ks: torch.Tensor,
         min_ps: torch.Tensor,
+        needs_filter: bool = True,
     ):
         logits = self.scale_logits(logits, temperatures)
-        sorted_logits, sorted_indices = self.filter_logits(logits, top_ps, top_ks, min_ps)
-        probs = torch.softmax(sorted_logits, dim=-1)
+        sorted_indices: torch.Tensor | None = None
+        if needs_filter:
+            logits, sorted_indices = self.filter_logits(logits, top_ps, top_ks, min_ps)
+        probs = torch.softmax(logits, dim=-1)
         sample_tokens = self.sample_probs(probs)
-        return sorted_indices.gather(1, sample_tokens.unsqueeze(1)).squeeze(1)
+        if sorted_indices is not None:
+            sample_tokens = sorted_indices.gather(1, sample_tokens.unsqueeze(1)).squeeze(1)
+        return sample_tokens
