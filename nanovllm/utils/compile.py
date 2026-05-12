@@ -1,5 +1,6 @@
 import torch
 from functools import wraps
+from collections.abc import Iterable
 
 
 def compile_with_eager_fallback(fn, name: str):
@@ -22,8 +23,14 @@ def compile_with_eager_fallback(fn, name: str):
 
     return wrapped
 
-def compile_model_modules(model: torch.nn.Module):
-    for module in model.modules():
-        compile_fn = getattr(module, "enable_compile", None)
-        if compile_fn is not None:
-            compile_fn()
+def compile_model_modules(*roots: torch.nn.Module):
+    for root in roots:
+        for module in root.modules():
+            method_names: Iterable[str] = getattr(module, "compile_methods", ())
+            if not method_names or getattr(module, "_compiled", False):
+                continue
+            for method_name in method_names:
+                method = getattr(module, method_name)
+                qualified_name = f"{module.__class__.__name__}.{method_name}"
+                setattr(module, method_name, compile_with_eager_fallback(method, qualified_name))
+            module._compiled = True

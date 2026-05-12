@@ -36,8 +36,7 @@ class ModelRunner:
         self.sampler = Sampler()
 
         if not self.enforce_eager:
-            self.sampler.enable_compile()
-            compile_model_modules(self.model)
+            compile_model_modules(self.model, self.sampler)
 
         self.warmup_model()
         self.clear_sequence_states()

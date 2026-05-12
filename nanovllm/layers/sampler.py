@@ -1,21 +1,10 @@
 import torch
 from torch import nn
 
-from nanovllm.utils.compile import compile_with_eager_fallback
-
 
 class Sampler(nn.Module):
 
-    def __init__(self):
-        super().__init__()
-        self._compiled = False
-
-    def enable_compile(self):
-        if self._compiled:
-            return
-        self.scale_logits = compile_with_eager_fallback(self.scale_logits, "Sampler.scale_logits")
-        self.sample_probs = compile_with_eager_fallback(self.sample_probs, "Sampler.sample_probs")
-        self._compiled = True
+    compile_methods = ("scale_logits", "sample_probs")
 
     def scale_logits(
         self,
