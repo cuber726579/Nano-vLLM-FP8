@@ -22,7 +22,7 @@ def apply_rotary_emb(
 
 class RotaryEmbedding(nn.Module):
 
-    compile_methods = ("forward",)
+    compile_methods = ["forward"]
 
     def __init__(
         self,

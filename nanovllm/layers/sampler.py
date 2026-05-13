@@ -4,7 +4,7 @@ from torch import nn
 
 class Sampler(nn.Module):
 
-    compile_methods = ("scale_logits", "sample_probs")
+    compile_methods = ["scale_logits", "sample_probs"]
 
     def scale_logits(
         self,

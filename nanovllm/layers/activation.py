@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class SiluAndMul(nn.Module):
 
-    compile_methods = ("forward",)
+    compile_methods = ["forward"]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, y = x.chunk(2, -1)
