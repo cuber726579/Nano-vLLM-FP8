@@ -24,7 +24,7 @@ This project is an improved implementation based on [Nano-vLLM](https://github.c
   
 * **Inference Engine Features** - Runtime improvements for efficient and flexible text generation:
   * **Chunked Prefill** - Splits long prefills across scheduling rounds so oversized prompts can make progress under batched token budget limits.
-  * **Extended Sampling Controls** - Supports `top_p`, `top_k`, and `min_p` in `SamplingParams`.
+  * **Extended Sampling Controls** - Supports `top_p`, `top_k`, and `min_p` in `SamplingParams`, including the fast path under default values.
   * **RoPE Compatibility** - Handles RoPE config differences across supported Qwen model families and transformers versions. See [ROPE.md](./ROPE.md) or upstream [PR #214](https://github.com/GeeeekExplorer/nano-vllm/pull/214) for details.
 
 
@@ -78,6 +78,7 @@ See `bench.py` for benchmark.
 
 **Basic Performance:**
 - Model: Qwen3-0.6B
+
 | Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
 |----------------|-------------|----------|-----------------------|
 | Nano-vLLM-Quant| 133,966     | 37.98    | 3526.98               |
@@ -85,6 +86,7 @@ See `bench.py` for benchmark.
 
 **FP8 Inference Performance:**
 - Model: Qwen3-0.6B-FP8
+
 | Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
 |----------------|-------------|----------|-----------------------|
 | Nano-vLLM-Quant| 133,966     | 41.69    | 3213.18               |
@@ -92,8 +94,16 @@ See `bench.py` for benchmark.
 
 **Chunked Prefill Update:**
 - Model: Qwen3-0.6B-FP8
+
 Nano-vLLM-FP8 now supports chunked prefill, allowing oversized prefills to be split across scheduling rounds instead of waiting for the whole prompt budget at once.
 
 | Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
 |----------------|-------------|----------|-----------------------|
 | Nano-vLLM-Quant + Chunked Prefill | 133,966 | 31.01 | 4320.04 |
+
+**Fast Path for New Sampling Controls**
+
+| Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
+|----------------|-------------|----------|-----------------------|
+| Nano-vLLM-Quant w/o Fast Path | 133,966 | 47.93 | 2794.98 |
+| Nano-vLLM-Quant w/ Fast Path  | 133,966 | 37.24 | 3597.75 |
