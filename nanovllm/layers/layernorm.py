@@ -4,7 +4,7 @@ from torch import nn
 
 class RMSNorm(nn.Module):
 
-    compile_methods = ("rms_forward", "add_rms_forward")
+    compile_methods = ["add_rms_forward"]
 
     def __init__(
         self,
