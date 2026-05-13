@@ -71,22 +71,29 @@ See [TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) for runtime issues such as `
 See `bench.py` for benchmark.
 
 **Test Configuration:**
-- Hardware: RTX 4080 (32GB)
-- Model: Qwen3-0.6B-FP8
+- Hardware: RTX 4070 TISUPER (16GB)
 - Total Requests: 256 sequences
 - Input Length: Randomly sampled between 100–1024 tokens
 - Output Length: Randomly sampled between 100–1024 tokens
 
-**Performance Results:**
+**Basic Performance:**
+- Model: Qwen3-0.6B
 | Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
 |----------------|-------------|----------|-----------------------|
-| Nano-vLLM-FP8  | 133,966     | 33.10    | 4047.47               |
-| vLLM           | 133,966     | 33.25    | 4029.13               |
+| Nano-vLLM-Quant| 133,966     | 37.98    | 3526.98               |
+| vLLM           | 133,966     | 38.39    | 3489.99               |
+
+**FP8 Inference Performance:**
+- Model: Qwen3-0.6B-FP8
+| Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
+|----------------|-------------|----------|-----------------------|
+| Nano-vLLM-Quant| 133,966     | 41.69    | 3213.18               |
+| vLLM           | 133,966     | 36.62    | 3657.78               |
 
 **Chunked Prefill Update:**
-
+- Model: Qwen3-0.6B-FP8
 Nano-vLLM-FP8 now supports chunked prefill, allowing oversized prefills to be split across scheduling rounds instead of waiting for the whole prompt budget at once.
 
 | Inference Engine | Output Tokens | Time (s) | Throughput (tokens/s) |
 |----------------|-------------|----------|-----------------------|
-| Nano-vLLM-FP8 + Chunked Prefill | 133,966 | 31.01 | 4320.04 |
+| Nano-vLLM-Quant + Chunked Prefill | 133,966 | 31.01 | 4320.04 |
