@@ -1,13 +1,12 @@
 import os
 from dotenv import load_dotenv
-load_dotenv()
-hf_home = os.getenv("HF_HOME")
 
 import time
 from random import randint, seed
 from pathlib import Path
-from nanovllm import LLM, SamplingParams # Total: 133966tok, Time: 33.10s, Throughput: 4047.47tok/s
-# from vllm import LLM, SamplingParams # Total: 133966tok, Time: 33.25s, Throughput: 4029.13tok/s
+from nanovllm import LLM, SamplingParams
+# from vllm import LLM, SamplingParams
+load_dotenv()
 
 
 def main():
@@ -17,13 +16,14 @@ def main():
     max_ouput_len = 1024
 
     model_id = "Qwen/Qwen3-0.6B-FP8"
-    path = str(Path(hf_home) / "models" / model_id)
+    cache = os.getenv("HF_HOME")
+    path = str(Path(cache) / "models" / model_id)
     llm = LLM(path, enforce_eager=False, max_model_len=4096)
 
     prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]
     sampling_params = [SamplingParams(temperature=0.6, ignore_eos=True, max_tokens=randint(100, max_ouput_len)) for _ in range(num_seqs)]
     # uncomment the following line for vllm
-    # prompt_token_ids = [dict(prompt_token_ids=p) for p in prompt_token_ids]
+    prompt_token_ids = [dict(prompt_token_ids=p) for p in prompt_token_ids]
 
     llm.generate(["Benchmark: "], SamplingParams())
     t = time.time()
