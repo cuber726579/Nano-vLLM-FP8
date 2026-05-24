@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 model_dict = {
     "qwen2": "nanovllm.models.qwen2:Qwen2ForCausalLM",
     "qwen3": "nanovllm.models.qwen3:Qwen3ForCausalLM",
+    "qwen3_moe": "nanovllm.models.qwen3_moe:Qwen3MoeForCausalLM",
     "qwen3_5_text": "nanovllm.models.qwen3_5:Qwen3_5ForCausalLM",
     "llama": "nanovllm.models.llama:LlamaForCausalLM",
     "mistral": "nanovllm.models.mistral:MistralForCausalLM",

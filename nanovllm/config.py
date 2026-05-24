@@ -11,6 +11,23 @@ KV_CACHE_DTYPE_ALIASES = {
 }
 
 
+def validate_qwen3_moe_tensor_parallel(hf_config: AutoConfig, tensor_parallel_size: int) -> None:
+    checks = {
+        "num_attention_heads": hf_config.num_attention_heads,
+        "num_key_value_heads": hf_config.num_key_value_heads,
+        "moe_intermediate_size": hf_config.moe_intermediate_size,
+        "vocab_size": hf_config.vocab_size,
+    }
+    invalid = [name for name, value in checks.items() if value % tensor_parallel_size != 0]
+    if invalid:
+        details = ", ".join(f"{name}={checks[name]}" for name in invalid)
+        raise ValueError(
+            "qwen3_moe tensor_parallel_size must divide attention heads, KV heads, "
+            "MoE intermediate size, and vocab size. "
+            f"Got tensor_parallel_size={tensor_parallel_size}, invalid: {details}."
+        )
+
+
 def normalize_rope_config(hf_config: AutoConfig) -> dict:
     # transformers >= v5.0.0 : rope_parameters
     if hasattr(hf_config, "rope_parameters") and hf_config.rope_parameters is not None:
@@ -69,6 +86,11 @@ class Config:
         self.quant_config = QuantConfig.from_hf_config(self.hf_config, self.quantization)
         if self.quant_config is not None:
             self.quantization = self.quant_config.quant_method
+        if self.hf_config.model_type == "qwen3_moe":
+            validate_qwen3_moe_tensor_parallel(self.hf_config, self.tensor_parallel_size)
+            if self.quant_config is not None:
+                raise NotImplementedError("qwen3_moe quantized checkpoints are not supported yet.")
+            self.enforce_eager = True
         if self.hf_config.model_type == "qwen3_5_text":
             self.enable_prefix_cache = False
             self.enforce_eager = True
