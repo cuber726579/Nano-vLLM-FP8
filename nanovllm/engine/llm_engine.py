@@ -84,13 +84,20 @@ class LLMEngine:
             self.add_request(prompt, sp)
         outputs = {}
         prefill_throughput = decode_throughput = 0.
+        prefill_tokens = decode_tokens = 0
+        prefill_time = decode_time = 0.
         while not self.is_finished():
             t = perf_counter()
             output, num_tokens = self.step()
+            elapsed = perf_counter() - t
             if num_tokens > 0:
-                prefill_throughput = num_tokens / (perf_counter() - t)
+                prefill_tokens += num_tokens
+                prefill_time += elapsed
+                prefill_throughput = num_tokens / elapsed
             else:
-                decode_throughput = -num_tokens / (perf_counter() - t)
+                decode_tokens += -num_tokens
+                decode_time += elapsed
+                decode_throughput = -num_tokens / elapsed
             pbar.set_postfix({
                 "Prefill": f"{int(prefill_throughput)}tok/s",
                 "Decode": f"{int(decode_throughput)}tok/s",
@@ -100,5 +107,16 @@ class LLMEngine:
                 pbar.update(1)
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
+        total_time = prefill_time + decode_time
+        self.last_generate_stats = {
+            "prefill_tokens": prefill_tokens,
+            "decode_tokens": decode_tokens,
+            "prefill_time": prefill_time,
+            "decode_time": decode_time,
+            "total_time": total_time,
+            "prefill_throughput": prefill_tokens / prefill_time if prefill_time > 0 else 0.,
+            "decode_throughput": decode_tokens / decode_time if decode_time > 0 else 0.,
+            "total_throughput": (prefill_tokens + decode_tokens) / total_time if total_time > 0 else 0.,
+        }
         pbar.close()
         return outputs
