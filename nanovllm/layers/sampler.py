@@ -56,12 +56,24 @@ class Sampler(nn.Module):
         min_ps: torch.Tensor,
         needs_filter: bool = True,
     ):
+        greedy_mask = temperatures <= 1e-10
+        if greedy_mask.all():
+            return logits.argmax(dim=-1)
+
+        sample_tokens = logits.argmax(dim=-1)
+        logits = logits[~greedy_mask]
+        temperatures = temperatures[~greedy_mask]
+        top_ps = top_ps[~greedy_mask]
+        top_ks = top_ks[~greedy_mask]
+        min_ps = min_ps[~greedy_mask]
+
         logits = self.scale_logits(logits, temperatures)
         sorted_indices: torch.Tensor | None = None
         if needs_filter:
             logits, sorted_indices = self.filter_logits(logits, top_ps, top_ks, min_ps)
         probs = torch.softmax(logits, dim=-1)
-        sample_tokens = self.sample_probs(probs)
+        non_greedy_tokens = self.sample_probs(probs)
         if sorted_indices is not None:
-            sample_tokens = sorted_indices.gather(1, sample_tokens.unsqueeze(1)).squeeze(1)
+            non_greedy_tokens = sorted_indices.gather(1, non_greedy_tokens.unsqueeze(1)).squeeze(1)
+        sample_tokens[~greedy_mask] = non_greedy_tokens
         return sample_tokens

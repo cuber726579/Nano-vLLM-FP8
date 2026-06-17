@@ -62,6 +62,8 @@ class LLMEngine:
         seqs, is_prefill = self.scheduler.schedule()
         num_tokens = sum(seq.num_scheduled_tokens for seq in seqs) if is_prefill else -len(seqs)
         token_ids = self.model_runner.call("run", seqs, is_prefill)
+        if not is_prefill:
+            num_tokens = -sum(len(token_id) if isinstance(token_id, list) else 1 for token_id in token_ids)
         finished_seq_ids = self.scheduler.postprocess(seqs, token_ids, is_prefill)
         if finished_seq_ids:
             self.model_runner.call("clear_sequence_states", finished_seq_ids)

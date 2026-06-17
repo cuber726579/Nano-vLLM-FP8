@@ -106,11 +106,17 @@ class BlockManager:
         seq.num_cached_tokens = 0
         seq.block_table.clear()
 
-    def can_append(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
+    def _num_required_blocks(self, seq: Sequence, extra_token_slots: int = 0) -> int:
+        num_tokens = len(seq) + extra_token_slots
+        return (num_tokens + self.block_size - 1) // self.block_size
 
-    def may_append(self, seq: Sequence):
-        if len(seq) % self.block_size == 1:
+    def can_append(self, seq: Sequence, extra_token_slots: int = 0) -> bool:
+        num_new_blocks = self._num_required_blocks(seq, extra_token_slots) - len(seq.block_table)
+        return len(self.free_block_ids) >= max(num_new_blocks, 0)
+
+    def may_append(self, seq: Sequence, extra_token_slots: int = 0):
+        num_new_blocks = self._num_required_blocks(seq, extra_token_slots) - len(seq.block_table)
+        for _ in range(max(num_new_blocks, 0)):
             seq.block_table.append(self._allocate_block())
 
     def hash_blocks(self, seq: Sequence):

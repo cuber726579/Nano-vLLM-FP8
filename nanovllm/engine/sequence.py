@@ -56,6 +56,10 @@ class Sequence:
         return self.token_ids[self.num_prompt_tokens:]
 
     @property
+    def is_greedy(self):
+        return self.temperature <= 1e-10
+
+    @property
     def num_cached_blocks(self):
         return self.num_cached_tokens // self.block_size
 
@@ -75,6 +79,13 @@ class Sequence:
         self.token_ids.append(token_id)
         self.last_token = token_id
         self.num_tokens += 1
+
+    def append_tokens(self, token_ids: list[int]):
+        if not token_ids:
+            return
+        self.token_ids.extend(token_ids)
+        self.last_token = token_ids[-1]
+        self.num_tokens += len(token_ids)
 
     def __getstate__(self):
         last_state = self.token_ids if self.is_prefill else self.last_token

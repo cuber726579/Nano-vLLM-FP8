@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass
 from transformers import AutoConfig
 
+from nanovllm.spec_decode import Eagle3Config, load_eagle3_config
 from nanovllm.quantization import QuantConfig
 
 KV_CACHE_DTYPE_ALIASES = {
@@ -77,6 +78,11 @@ class Config:
     kv_cache_dtype: str | None = None
     enable_prefix_cache: bool = True
     quant_config: QuantConfig | None = None
+    speculative_model: str | None = None
+    speculative_method: str | None = None
+    num_speculative_tokens: int = 3
+    eagle3_target_layer_ids: tuple[int, int, int] | list[int] | None = None
+    eagle3_config: Eagle3Config | None = None
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
@@ -101,3 +107,48 @@ class Config:
             self.kv_cache_dtype = KV_CACHE_DTYPE_ALIASES[self.kv_cache_dtype]
             self.enforce_eager = True
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
+        self._init_speculative_config()
+
+    def _init_speculative_config(self):
+        if self.speculative_model is None:
+            return
+        if not os.path.isdir(self.speculative_model):
+            raise ValueError(f"speculative_model must be a local directory: {self.speculative_model!r}")
+
+        self.speculative_method = (self.speculative_method or "eagle3").lower()
+        if self.speculative_method != "eagle3":
+            raise NotImplementedError(f"Unsupported speculative_method: {self.speculative_method!r}")
+        if self.tensor_parallel_size != 1:
+            raise NotImplementedError("Eagle3 speculative decoding v1 only supports tensor_parallel_size=1.")
+        if self.hf_config.model_type != "qwen3":
+            raise NotImplementedError("Eagle3 speculative decoding v1 only supports dense Qwen3 verifier models.")
+        if self.num_speculative_tokens < 1:
+            raise ValueError("num_speculative_tokens must be >= 1.")
+
+        layer_ids = self.eagle3_target_layer_ids
+        if layer_ids is None:
+            num_layers = self.hf_config.num_hidden_layers
+            layer_ids = (2, num_layers // 2, num_layers - 3)
+        layer_ids = tuple(int(layer_id) for layer_id in layer_ids)
+        if len(layer_ids) != 3:
+            raise ValueError("eagle3_target_layer_ids must contain exactly 3 layer ids.")
+        invalid = [layer_id for layer_id in layer_ids if layer_id < 0 or layer_id >= self.hf_config.num_hidden_layers]
+        if invalid:
+            raise ValueError(
+                "eagle3_target_layer_ids out of range for verifier "
+                f"num_hidden_layers={self.hf_config.num_hidden_layers}: {invalid}"
+            )
+        self.eagle3_target_layer_ids = layer_ids
+
+        self.eagle3_config = load_eagle3_config(self.speculative_model)
+        if self.eagle3_config.target_vocab_size != self.hf_config.vocab_size:
+            raise ValueError(
+                "Eagle3 speculator target vocab size does not match verifier vocab size: "
+                f"{self.eagle3_config.target_vocab_size} != {self.hf_config.vocab_size}"
+            )
+        if self.eagle3_config.target_hidden_size != self.hf_config.hidden_size:
+            raise ValueError(
+                "Eagle3 speculator target hidden size does not match verifier hidden size: "
+                f"{self.eagle3_config.target_hidden_size} != {self.hf_config.hidden_size}"
+            )
+        self.enforce_eager = True

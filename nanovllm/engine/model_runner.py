@@ -8,6 +8,7 @@ from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence
 from nanovllm.layers.sampler import Sampler
 from nanovllm.models.registry import build_model_from_config
+from nanovllm.spec_decode import Eagle3Speculator
 from nanovllm.utils.context import set_context, get_context, reset_context
 from nanovllm.utils.dtypes import get_dtype_size, get_kv_cache_dtype, get_model_dtype
 from nanovllm.utils.loader import load_model
@@ -33,6 +34,16 @@ class ModelRunner:
 
         self.model = build_model_from_config(config)
         load_model(self.model, config.model)
+        self.speculator = None
+        if config.eagle3_config is not None:
+            self.speculator = Eagle3Speculator(config.eagle3_config)
+            loaded_speculator_weights = load_model(self.speculator, config.speculative_model)
+            missing_vocab_buffers = {"d2t", "t2d"} - loaded_speculator_weights
+            if missing_vocab_buffers:
+                names = ", ".join(sorted(missing_vocab_buffers))
+                raise ValueError(f"Eagle3 speculator is missing required vocabulary mapping buffer(s): {names}.")
+            if not self.speculator.t2d.any().item():
+                raise ValueError("Eagle3 speculator is missing a valid t2d vocabulary mapping buffer.")
         self.sampler = Sampler()
 
         if not self.enforce_eager:
@@ -211,10 +222,11 @@ class ModelRunner:
         context_lens = []
         seq_ids = []
         for seq in seqs:
+            token_pos = len(seq) - 1
             input_ids.append(seq.last_token)
-            positions.append(len(seq) - 1)
+            positions.append(token_pos)
             context_lens.append(len(seq))
-            slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1)
+            slot_mapping.append(seq.block_table[token_pos // self.block_size] * self.block_size + token_pos % self.block_size)
             seq_ids.append(seq.seq_id)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
@@ -222,6 +234,49 @@ class ModelRunner:
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables, seq_ids=seq_ids)
+        return input_ids, positions
+
+    def prepare_spec_verify(self, seqs: list[Sequence], draft_token_ids: torch.Tensor):
+        input_ids = []
+        positions = []
+        slot_mapping = []
+        cu_seqlens_q = [0]
+        cu_seqlens_k = [0]
+        max_seqlen_q = 0
+        max_seqlen_k = 0
+        seq_ids = []
+        num_draft_tokens = draft_token_ids.size(1)
+        draft_token_ids_cpu = draft_token_ids.cpu().tolist()
+        for seq, seq_draft_token_ids in zip(seqs, draft_token_ids_cpu):
+            start = len(seq)
+            end = start + num_draft_tokens
+            input_ids.extend(seq_draft_token_ids)
+            positions.extend(range(start, end))
+            for pos in range(start, end):
+                block_id = seq.block_table[pos // self.block_size]
+                slot_mapping.append(block_id * self.block_size + pos % self.block_size)
+            cu_seqlens_q.append(cu_seqlens_q[-1] + num_draft_tokens)
+            cu_seqlens_k.append(cu_seqlens_k[-1] + end)
+            max_seqlen_q = max(max_seqlen_q, num_draft_tokens)
+            max_seqlen_k = max(max_seqlen_k, end)
+            seq_ids.append(seq.seq_id)
+        input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
+        positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
+        cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        block_tables = self.prepare_block_tables(seqs)
+        set_context(
+            True,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            slot_mapping,
+            None,
+            block_tables,
+            seq_ids=seq_ids,
+        )
         return input_ids, positions
 
     def prepare_sample(self, seqs: list[Sequence]):
@@ -239,7 +294,8 @@ class ModelRunner:
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
-            return self.model.compute_logits(self.model(input_ids, positions))
+            hidden_states = self.model(input_ids, positions)
+            return self.model.compute_logits(hidden_states)
         else:
             bs = input_ids.size(0)
             context = get_context()
@@ -255,11 +311,108 @@ class ModelRunner:
             graph.replay()
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
+    @torch.inference_mode()
+    def run_model_with_aux_hidden(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        aux_hidden_layer_ids: tuple[int, int, int],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden_states, aux_hidden_states = self.model(
+            input_ids,
+            positions,
+            aux_hidden_layer_ids=aux_hidden_layer_ids,
+        )
+        logits = self.model.compute_logits(hidden_states)
+        return logits, aux_hidden_states
+
+    def should_speculate(self, seqs: list[Sequence], is_prefill: bool) -> bool:
+        return (
+            self.speculator is not None
+            and not is_prefill
+            and all(seq.is_greedy for seq in seqs)
+        )
+
+    def accept_speculative_tokens(
+        self,
+        seq: Sequence,
+        draft_token_ids: list[int],
+        target_token_ids: list[int],
+    ) -> tuple[list[int], int]:
+        max_new_tokens = seq.max_tokens - seq.num_completion_tokens
+        if max_new_tokens <= 0:
+            return [], 0
+
+        accepted_count = 0
+        output_token_ids = []
+        for i, draft_token_id in enumerate(draft_token_ids):
+            if len(output_token_ids) >= max_new_tokens:
+                break
+            if draft_token_id == target_token_ids[i]:
+                output_token_ids.append(draft_token_id)
+                accepted_count += 1
+                if not seq.ignore_eos and draft_token_id == self.config.eos:
+                    break
+                continue
+            output_token_ids.append(target_token_ids[i])
+            break
+        else:
+            if len(output_token_ids) < max_new_tokens:
+                output_token_ids.append(target_token_ids[len(draft_token_ids)])
+
+        return output_token_ids, accepted_count
+
+    @torch.inference_mode()
+    def run_speculative_decode(
+        self,
+        seqs: list[Sequence],
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+    ) -> list[list[int]]:
+        assert self.speculator is not None
+        logits, aux_hidden_states = self.run_model_with_aux_hidden(
+            input_ids,
+            positions,
+            self.config.eagle3_target_layer_ids,
+        )
+        first_target_token_ids = logits.argmax(dim=-1)
+        fused_hidden_states = self.speculator.combine_hidden_states(aux_hidden_states)
+        draft_token_ids = self.speculator.propose(
+            input_ids,
+            positions,
+            fused_hidden_states,
+            self.config.num_speculative_tokens,
+        )
+
+        verify_input_ids, verify_positions = self.prepare_spec_verify(seqs, draft_token_ids)
+        verify_hidden_states = self.model(verify_input_ids, verify_positions)
+        verify_logits = self.model.compute_logits(verify_hidden_states, all_tokens=True)
+        batch_size = len(seqs)
+        num_speculative_tokens = self.config.num_speculative_tokens
+        verify_token_ids = verify_logits.argmax(dim=-1).view(batch_size, num_speculative_tokens)
+        target_token_ids = torch.cat([first_target_token_ids.unsqueeze(1), verify_token_ids], dim=1)
+
+        outputs = []
+        draft_token_ids_cpu = draft_token_ids.cpu().tolist()
+        target_token_ids_cpu = target_token_ids.cpu().tolist()
+        for seq, seq_draft_token_ids, seq_target_token_ids in zip(seqs, draft_token_ids_cpu, target_token_ids_cpu):
+            output_token_ids, accepted_count = self.accept_speculative_tokens(
+                seq,
+                seq_draft_token_ids,
+                seq_target_token_ids,
+            )
+            seq.num_scheduled_tokens = 1 + accepted_count
+            outputs.append(output_token_ids)
+        return outputs
+
     def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
-        sample_params = self.prepare_sample(seqs) if self.rank == 0 else None
-        logits = self.run_model(input_ids, positions, is_prefill)
-        token_ids = self.sampler(logits, *sample_params).tolist() if self.rank == 0 else None
+        if self.rank == 0 and self.should_speculate(seqs, is_prefill):
+            token_ids = self.run_speculative_decode(seqs, input_ids, positions)
+        else:
+            sample_params = self.prepare_sample(seqs) if self.rank == 0 else None
+            logits = self.run_model(input_ids, positions, is_prefill)
+            token_ids = self.sampler(logits, *sample_params).tolist() if self.rank == 0 else None
         reset_context()
         return token_ids
 
